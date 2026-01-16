@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+
+# Virtual environments
+gymenv/
+venv/
+
+# Large files / models
+*.pt
+*.pth
+*.h5
+*.ckpt
+*.json
+
+# Data
+data/
+datasets/
+
+# Logs
+*.log
