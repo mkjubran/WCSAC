@@ -16,6 +16,8 @@ venv/
 # Data
 data/
 datasets/
+runs/
+results/
 
 # Logs
 *.log

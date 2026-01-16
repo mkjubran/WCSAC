@@ -27,12 +27,12 @@ TRAFFIC_PROFILES = ['uniform', 'uniform']  # Profile for each slice
 # Options: 'uniform', 'low', 'medium', 'high', 'external'
 
 # QoS Tables
-QOS_TABLE_FILES = [None, None]  # JSON file path for each slice's QoS table
+QOS_TABLE_FILES = ['qos_voip_all_metrics.json', 'qos_voip_all_metrics.json']  # JSON file path for each slice's QoS table
 # Example: ['qos_voip_all_metrics.json', 'qos_cbr_all_metrics.json']
 # Set to None to use default QoS model
 
 # QoS Metrics to Use
-QOS_METRICS = [None, None]  # Which metric to use from each QoS file
+QOS_METRICS = ['voIPFrameLoss', 'voIPFrameLoss']  # Which metric to use from each QoS file
 # Example: ['voIPFrameLoss', 'cbrFrameDelay']
 # Set to None to use the first available metric
 # 
@@ -64,7 +64,7 @@ T_MAX = 200     # Maximum DTIs per episode
 # ============================================================================
 
 # Training Duration
-NUM_EPISODES = 1000  # E_max: Total episodes
+NUM_EPISODES = 100  # E_max: Total episodes
 MAX_DTIS = 200      # T_max: DTIs per episode (same as T_MAX above)
 
 # Learning Rates
@@ -76,7 +76,7 @@ GAMMA = 0.99      # Discount factor
 TAU = 0.005       # τ_soft: Soft update rate
 
 # Training Parameters
-BATCH_SIZE = 256
+BATCH_SIZE = 8
 BUFFER_CAPACITY = 100000
 MIN_BUFFER_SIZE = 1000
 

@@ -82,8 +82,14 @@ def convert_qos_file_all_metrics(input_file, output_file):
     
     print(f"  Saved to: {output_file}")
     print(f"  Traffic values: {sorted([int(k) for k in converted.keys()])}")
-    print(f"  RB values: {sorted([int(k) for k in converted[list(converted.keys())[0]].keys()])}")
-    print(f"  Preserved metrics: {list(converted[list(converted.keys())[0]][list(converted[list(converted.keys())[0]].keys()][0]].keys())}")
+    
+    # Get sample UE and RB for showing metrics
+    sample_ue = list(converted.keys())[0]
+    sample_rb = list(converted[sample_ue].keys())[0]
+    sample_metrics = list(converted[sample_ue][sample_rb].keys())
+    
+    print(f"  RB values: {sorted([int(k) for k in converted[sample_ue].keys()])}")
+    print(f"  Preserved metrics: {sample_metrics}")
     
     return converted
 
