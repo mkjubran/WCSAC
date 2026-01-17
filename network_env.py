@@ -8,7 +8,7 @@ import pandas as pd
 import json
 from typing import Dict, List, Tuple, Optional
 from traffic_generation import TrafficGenerator
-
+import pdb
 
 class NetworkEnvironment:
     """
@@ -256,7 +256,8 @@ class NetworkEnvironment:
             done = True
             info = {'constraint_violated': True}
             return state, reward, done, info
-        
+
+
         # Step 1: Generate traffic for K slices
         for k in range(self.K):
             x_k = self.traffic_gen.generate_traffic(
@@ -285,7 +286,9 @@ class NetworkEnvironment:
                 
                 # Sample from Gaussian
                 qos_value = np.random.normal(mu, sigma)
-                qos_value = np.clip(qos_value, 0, 1)  # Clamp to valid range
+                # Note: No clipping - QoS values can be any positive number
+                # (e.g., delay in ms can be > 1, loss % from QoS files is raw value)
+                qos_value = max(0, qos_value)  # Only ensure non-negative
                 q_k.append(qos_value)
             
             self.Q[k].extend(q_k)

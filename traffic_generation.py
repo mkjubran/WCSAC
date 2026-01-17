@@ -49,11 +49,11 @@ class TrafficGenerator:
         if profile == 'uniform':
             return self._generate_uniform(N)
         elif profile == 'low':
-            return self._generate_beta(N, alpha=2, beta=5)
+            return self._generate_beta(N, alpha=2, beta_param=5)
         elif profile == 'medium':
-            return self._generate_beta(N, alpha=2, beta=2)
+            return self._generate_beta(N, alpha=2, beta_param=2)
         elif profile == 'high':
-            return self._generate_beta(N, alpha=5, beta=2)
+            return self._generate_beta(N, alpha=5, beta_param=2)
         elif profile == 'external':
             return self._load_external(N, slice_id)
         else:
