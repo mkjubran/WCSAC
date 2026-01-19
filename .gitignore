@@ -18,6 +18,7 @@ data/
 datasets/
 runs/
 results/
+configs/
 
 # Logs
 *.log

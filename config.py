@@ -23,16 +23,26 @@ LAMBDA = 0.5    # λ: Weight for resource efficiency bonus
 W = 5           # Window size for β and CDF computation (None = ∞, 5 = last 5 DTIs)
 
 # Traffic Generation (Algorithm 4)
-TRAFFIC_PROFILES = ['uniform', 'uniform']  # Profile for each slice
-# Options: 'uniform', 'low', 'medium', 'high', 'external'
+TRAFFIC_PROFILES = ['low', 'high']  # Profile for each slice
+# Options: 'uniform', 'extremely_low', 'low', 'medium', 'high', 'extremely_high', 'dynamic', 'external'
+
+# Dynamic Profile Configuration (applies to all slices using 'dynamic')
+DYNAMIC_PROFILE_CONFIG = {
+    'profile_set': ['low', 'medium', 'high'],  # Profiles to randomly select from
+    'change_period': 100  # Change profile every N DTIs
+}
+# Example: TRAFFIC_PROFILES = ['dynamic', 'dynamic', 'high']
+#          Both dynamic slices will change every 100 DTIs
+#          Each randomly selects from ['low', 'medium', 'high']
+#          Selections are independent per slice
 
 # QoS Tables
-QOS_TABLE_FILES = ['qos_voip_all_metrics.json', 'qos_voip_all_metrics.json']  # JSON file path for each slice's QoS table
+QOS_TABLE_FILES = ['voIPFrameDelay', 'voIPFrameDelay']  # JSON file path for each slice's QoS table
 # Example: ['qos_voip_all_metrics.json', 'qos_cbr_all_metrics.json']
 # Set to None to use default QoS model
 
 # QoS Metrics to Use
-QOS_METRICS = ['voIPFrameDelay', 'voIPFrameDelay']  # Which metric to use from each QoS file
+QOS_METRICS = [None, None]  # Which metric to use from each QoS file
 # Example: ['voIPFrameLoss', 'cbrFrameDelay']
 # Set to None to use the first available metric
 # 
@@ -56,7 +66,7 @@ QOS_METRICS = ['voIPFrameDelay', 'voIPFrameDelay']  # Which metric to use from e
 TRAFFIC_VALUES = list(range(5, 85, 5))  # T = {5, 10, 15, ..., 80}
 
 # Episode Length
-T_MAX = 200     # Maximum DTIs per episode
+T_MAX = 2000     # Maximum DTIs per episode
 
 
 # ============================================================================
@@ -65,7 +75,7 @@ T_MAX = 200     # Maximum DTIs per episode
 
 # Training Duration
 NUM_EPISODES = 1000  # E_max: Total episodes
-MAX_DTIS = 200      # T_max: DTIs per episode (same as T_MAX above)
+MAX_DTIS = 2000      # T_max: DTIs per episode (same as T_MAX above)
 
 # Learning Rates
 LR_ACTOR = 3e-4   # η_π: Actor learning rate
@@ -118,6 +128,7 @@ def get_config():
         'traffic_profiles': TRAFFIC_PROFILES,
         'qos_table_files': QOS_TABLE_FILES,
         'qos_metrics': QOS_METRICS,
+        'dynamic_profile_config': DYNAMIC_PROFILE_CONFIG,
         'max_dtis': T_MAX,
         
         # SAC
@@ -157,6 +168,9 @@ def print_config():
     print(f"  λ (lambda):           {LAMBDA}")
     print(f"  W (window size):      {W if W else '∞'} DTIs")
     print(f"  Traffic profiles:     {TRAFFIC_PROFILES}")
+    print(f"  Dynamic config:")
+    print(f"    Profile set:        {DYNAMIC_PROFILE_CONFIG['profile_set']}")
+    print(f"    Change period:      {DYNAMIC_PROFILE_CONFIG['change_period']} DTIs")
     print(f"  QoS table files:      {QOS_TABLE_FILES}")
     print(f"  QoS metrics:          {QOS_METRICS}")
     print(f"  T_max (max DTIs):     {T_MAX}")

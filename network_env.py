@@ -8,7 +8,7 @@ import pandas as pd
 import json
 from typing import Dict, List, Tuple, Optional
 from traffic_generation import TrafficGenerator
-import pdb
+
 
 class NetworkEnvironment:
     """
@@ -256,8 +256,7 @@ class NetworkEnvironment:
             done = True
             info = {'constraint_violated': True}
             return state, reward, done, info
-
-
+        
         # Step 1: Generate traffic for K slices
         for k in range(self.K):
             x_k = self.traffic_gen.generate_traffic(
@@ -313,11 +312,19 @@ class NetworkEnvironment:
         self.current_dti += 1
         done = (self.current_dti >= self.max_dtis)
         
+        # Collect current DTI traffic for each slice (average over N TTIs)
+        traffic_per_slice = []
+        for k in range(self.K):
+            current_traffic = self.X[k][-self.N:]  # Last N TTIs
+            avg_traffic = np.mean(current_traffic)
+            traffic_per_slice.append(avg_traffic)
+        
         info = {
             'beta': beta,
             'dti': self.current_dti,
             'r_used': r_used,
             'constraint_violated': False,
+            'traffic': traffic_per_slice,  # Average traffic per slice in this DTI
         }
         
         return state, reward, done, info

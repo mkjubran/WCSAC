@@ -101,6 +101,33 @@ def train_sac():
             # Store transition
             agent.replay_buffer.push(state, action, reward, next_state, done)
             
+            # Log per-DTI metrics (for detailed analysis)
+            global_step = episode * cfg['max_dtis'] + dti
+            writer.add_scalar('dti/reward', reward, global_step)
+            writer.add_scalar('dti/beta', info['beta'], global_step)
+            
+            # Log actions per slice
+            for k in range(cfg['K']):
+                writer.add_scalar(f'dti/action_slice{k}', action[k], global_step)
+            
+            # Log traffic per slice
+            for k in range(cfg['K']):
+                writer.add_scalar(f'dti/traffic_slice{k}', info['traffic'][k], global_step)
+            
+            # Log specific episodes for detailed per-DTI analysis
+            # Log every 10th episode, first/last episodes, and episodes around milestones
+            log_this_episode = (
+                episode in [1, 10, 50, 100, 200, 500, cfg['num_episodes']] or
+                episode % 100 == 0
+            )
+            
+            if log_this_episode:
+                writer.add_scalar(f'episode_{episode}/reward', reward, dti)
+                writer.add_scalar(f'episode_{episode}/beta', info['beta'], dti)
+                for k in range(cfg['K']):
+                    writer.add_scalar(f'episode_{episode}/action_slice{k}', action[k], dti)
+                    writer.add_scalar(f'episode_{episode}/traffic_slice{k}', info['traffic'][k], dti)
+            
             # Update statistics
             episode_reward += reward
             episode_beta_sum += info['beta']
