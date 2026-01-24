@@ -14,16 +14,21 @@ class TrafficGenerator:
     
     Profiles:
     - uniform: Uniform distribution over T
+    - extremely_low: Beta(1,5) - very light traffic (5-20 UEs typical)
     - low: Beta(2,5) - light traffic (5-30 UEs typical)
     - medium: Beta(2,2) - moderate traffic (25-55 UEs typical)  
     - high: Beta(5,2) - heavy traffic (50-80 UEs typical)
+    - extremely_high: Beta(5,1) - very heavy traffic (60-80 UEs typical)
+    - dynamic: Switches between profiles periodically
     - external: Load from file/array
     """
     
-    def __init__(self, traffic_values: List[int] = None):
+    def __init__(self, traffic_values: List[int] = None, dynamic_config: dict = None):
         """
         Args:
             traffic_values: Discrete traffic levels, e.g., [5, 10, 15, ..., 80]
+            dynamic_config: Configuration for dynamic profile switching
+                           {'profile_set': [...], 'change_period': int}
         """
         if traffic_values is None:
             self.traffic_values = list(range(5, 85, 5))  # [5, 10, ..., 80]
@@ -33,31 +38,109 @@ class TrafficGenerator:
         self.T = np.array(self.traffic_values)
         self.external_data = {}
         self.external_index = {}
+        
+        # Dynamic profile configuration
+        if dynamic_config is None:
+            self.dynamic_config = {
+                'profile_set': ['low', 'medium', 'high'],
+                'change_period': 100
+            }
+        else:
+            self.dynamic_config = dynamic_config
+            # Validate that profile_set doesn't contain 'dynamic'
+            if 'profile_set' in self.dynamic_config:
+                invalid = [p for p in self.dynamic_config['profile_set'] if p == 'dynamic']
+                if invalid:
+                    raise ValueError(
+                        "Dynamic profile_set cannot contain 'dynamic' itself. "
+                        "Use static profiles like 'low', 'medium', 'high', etc."
+                    )
+        
+        # Track current profile for each slice (for dynamic)
+        self.current_profiles = {}
+        self.dti_counter = 0
+        self.last_change_dti = 0
+    
+    def reset_dynamic(self):
+        """Reset dynamic profile state at episode start"""
+        self.current_profiles = {}
+        self.dti_counter = 0
+        self.last_change_dti = 0
+    
+    def update_dti(self):
+        """Update DTI counter for dynamic profile switching"""
+        self.dti_counter += 1
+        if (self.dti_counter - self.last_change_dti) >= self.dynamic_config['change_period']:
+            self.last_change_dti = self.dti_counter
+            self.current_profiles = {}
+    
+    def _select_dynamic_profile(self, slice_id: int) -> str:
+        """
+        Select a profile for dynamic mode.
+        
+        Args:
+            slice_id: Slice identifier
+            
+        Returns:
+            profile: Selected profile name
+        """
+        if slice_id not in self.current_profiles:
+            # Randomly select from profile set
+            profile_set = self.dynamic_config['profile_set']
+            if not profile_set:
+                profile_set = ['low', 'medium', 'high']
+            
+            # Filter out 'dynamic' to prevent recursion
+            valid_profiles = [p for p in profile_set if p != 'dynamic']
+            if not valid_profiles:
+                raise ValueError("Dynamic profile_set must contain at least one non-dynamic profile")
+            
+            selected_profile = np.random.choice(valid_profiles)
+            self.current_profiles[slice_id] = selected_profile
+        
+        return self.current_profiles[slice_id]
     
     def generate_traffic(self, profile: str, N: int, slice_id: int = 0) -> np.ndarray:
         """
         Generate traffic vector following Algorithm 4.
         
         Args:
-            profile: 'uniform', 'low', 'medium', 'high', or 'external'
+            profile: 'uniform', 'extremely_low', 'low', 'medium', 'high',
+                    'extremely_high', 'dynamic', or 'external'
             N: Number of TTIs to generate
-            slice_id: Slice identifier (for external data)
+            slice_id: Slice identifier (for external data and dynamic)
             
         Returns:
             x: Traffic vector [x_1, ..., x_N] where x_i ∈ T
         """
+        # Handle dynamic profile
+        if profile == 'dynamic':
+            actual_profile = self._select_dynamic_profile(slice_id)
+            return self.generate_traffic(actual_profile, N, slice_id)
+        
         if profile == 'uniform':
             return self._generate_uniform(N)
+        elif profile == 'extremely_low':
+            return self._generate_beta(N, alpha=1, beta_param=5)
         elif profile == 'low':
             return self._generate_beta(N, alpha=2, beta_param=5)
         elif profile == 'medium':
             return self._generate_beta(N, alpha=2, beta_param=2)
         elif profile == 'high':
             return self._generate_beta(N, alpha=5, beta_param=2)
+        elif profile == 'extremely_high':
+            return self._generate_beta(N, alpha=5, beta_param=1)
         elif profile == 'external':
             return self._load_external(N, slice_id)
         else:
             raise ValueError(f"Unknown profile: {profile}")
+    
+    def get_active_profile(self, profile: str, slice_id: int = 0) -> str:
+        """Get the currently active profile for a slice"""
+        if profile == 'dynamic':
+            return self._select_dynamic_profile(slice_id)
+        else:
+            return profile
     
     def _generate_uniform(self, N: int) -> np.ndarray:
         """Uniform profile: x_i ~ Uniform(T)"""
@@ -165,7 +248,7 @@ if __name__ == "__main__":
     print("Traffic Generation Profiles (N=20 TTIs)")
     print("=" * 60)
     
-    for profile in ['uniform', 'low', 'medium', 'high']:
+    for profile in ['uniform', 'extremely_low', 'low', 'medium', 'high', 'extremely_high']:
         traffic = generator.generate_traffic(profile, N=20)
         stats = generator.get_profile_stats(profile)
         

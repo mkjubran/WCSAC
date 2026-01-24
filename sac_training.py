@@ -53,7 +53,9 @@ def train_sac():
         window_size=cfg['window_size'],
         traffic_profiles=cfg['traffic_profiles'],
         qos_table_files=cfg['qos_table_files'],
-        qos_metrics=cfg['qos_metrics']
+        qos_metrics=cfg['qos_metrics'],
+        dynamic_profile_config=cfg['dynamic_profile_config'],
+        max_dtis=cfg['max_dtis']
     )
     
     print(f"\nState dimension: {env.state_dim}")
@@ -114,11 +116,21 @@ def train_sac():
             for k in range(cfg['K']):
                 writer.add_scalar(f'dti/traffic_slice{k}', info['traffic'][k], global_step)
             
+            # Log active profiles per slice (for dynamic profiles)
+            for k in range(cfg['K']):
+                profile_map = {
+                    'uniform': 0, 'extremely_low': 1, 'low': 2,
+                    'medium': 3, 'high': 4, 'extremely_high': 5, 'external': 6
+                }
+                profile_name = str(info['active_profiles'][k])
+                profile_id = profile_map.get(profile_name, -1)
+                writer.add_scalar(f'dti/active_profile_slice{k}', profile_id, global_step)
+            
             # Log specific episodes for detailed per-DTI analysis
             # Log every 10th episode, first/last episodes, and episodes around milestones
             log_this_episode = (
-                episode in [1, 10, 50, 100, 200, 500, cfg['num_episodes']] or
-                episode % 100 == 0
+                episode in [1, 2, 5, cfg['num_episodes']] or
+                episode % 10 == 0
             )
             
             if log_this_episode:
@@ -127,6 +139,9 @@ def train_sac():
                 for k in range(cfg['K']):
                     writer.add_scalar(f'episode_{episode}/action_slice{k}', action[k], dti)
                     writer.add_scalar(f'episode_{episode}/traffic_slice{k}', info['traffic'][k], dti)
+                    profile_name = str(info['active_profiles'][k])
+                    profile_id = profile_map.get(profile_name, -1)
+                    writer.add_scalar(f'episode_{episode}/active_profile_slice{k}', profile_id, dti)
             
             # Update statistics
             episode_reward += reward

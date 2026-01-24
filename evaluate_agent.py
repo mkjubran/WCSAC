@@ -219,7 +219,7 @@ def compare_traffic_profiles(agent, save_path='results'):
     """
     Compare agent performance across different traffic profiles.
     """
-    profiles = ['uniform', 'low', 'medium', 'high']
+    profiles = ['uniform', 'extremely_low', 'low', 'medium', 'high', 'extremely_high']
     results_by_profile = {}
     
     for profile in profiles:
@@ -300,7 +300,9 @@ if __name__ == "__main__":
         window_size=cfg['window_size'],
         traffic_profiles=cfg['traffic_profiles'],
         qos_table_files=cfg['qos_table_files'],
-        qos_metrics=cfg['qos_metrics']
+        qos_metrics=cfg['qos_metrics'],
+        dynamic_profile_config=cfg['dynamic_profile_config'],
+        max_dtis=cfg['max_dtis']
     )
     
     # Create agent

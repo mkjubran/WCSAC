@@ -355,4 +355,3 @@ class SAC:
         
         self.log_alpha = checkpoint['log_alpha']
         self.alpha_optimizer.load_state_dict(checkpoint['alpha_optimizer'])
-

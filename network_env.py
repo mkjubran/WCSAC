@@ -31,6 +31,8 @@ class NetworkEnvironment:
         qos_tables: List[pd.DataFrame] = None,
         qos_table_files: List[str] = None,  # JSON file paths
         qos_metrics: List[str] = None,  # NEW: Which metric to use per slice
+        dynamic_profile_config: dict = None,  # Config for dynamic profiles
+        max_dtis: int = 200,  # T_max: Maximum DTIs per episode
     ):
         """
         Args:
@@ -40,10 +42,12 @@ class NetworkEnvironment:
             thresholds: QoS thresholds [τ_1, ..., τ_K]
             lambda_reward: Weight for resource efficiency
             window_size: W for sliding window (None = ∞)
-            traffic_profiles: ['uniform', 'low', etc.] for each slice
+            traffic_profiles: ['uniform', 'low', 'dynamic', etc.] for each slice
             qos_tables: QoS lookup tables for each slice
             qos_table_files: JSON file paths for QoS tables (if provided)
             qos_metrics: Which metric to use from each JSON file (if multi-metric)
+            dynamic_profile_config: {'profile_set': [...], 'change_period': int}
+            max_dtis: Maximum DTIs per episode (T_max)
         """
         # Parameters
         self.K = K
@@ -59,7 +63,7 @@ class NetworkEnvironment:
             self.thresholds = thresholds
         
         # Traffic generation
-        self.traffic_gen = TrafficGenerator()
+        self.traffic_gen = TrafficGenerator(dynamic_config=dynamic_profile_config)
         if traffic_profiles is None:
             self.traffic_profiles = ['uniform'] * K
         else:
@@ -90,7 +94,7 @@ class NetworkEnvironment:
         
         # Current DTI
         self.current_dti = 0
-        self.max_dtis = 200  # T_max
+        self.max_dtis = max_dtis  # T_max from config
     
     def _create_default_qos_tables(self):
         """Create default QoS tables: (traffic, RBs) -> (μ, σ)"""
@@ -224,6 +228,9 @@ class NetworkEnvironment:
         # Reset DTI counter
         self.current_dti = 0
         
+        # Reset dynamic profile state
+        self.traffic_gen.reset_dynamic()
+        
         # Reset external traffic indices if used
         for k in range(self.K):
             if self.traffic_profiles[k] == 'external':
@@ -246,6 +253,9 @@ class NetworkEnvironment:
         Returns:
             next_state, reward, done, info
         """
+        # Update DTI counter for dynamic profile switching
+        self.traffic_gen.update_dti()
+        
         # Step 0: Validate action (before rounding)
         if np.sum(action) > self.C + 1e-6:  # Small tolerance
             # Constraint violated
@@ -314,10 +324,17 @@ class NetworkEnvironment:
         
         # Collect current DTI traffic for each slice (average over N TTIs)
         traffic_per_slice = []
+        active_profiles = []
         for k in range(self.K):
             current_traffic = self.X[k][-self.N:]  # Last N TTIs
             avg_traffic = np.mean(current_traffic)
             traffic_per_slice.append(avg_traffic)
+            
+            # Get active profile (for logging dynamic profiles)
+            active_profile = self.traffic_gen.get_active_profile(
+                self.traffic_profiles[k], slice_id=k
+            )
+            active_profiles.append(active_profile)
         
         info = {
             'beta': beta,
@@ -325,6 +342,7 @@ class NetworkEnvironment:
             'r_used': r_used,
             'constraint_violated': False,
             'traffic': traffic_per_slice,  # Average traffic per slice in this DTI
+            'active_profiles': active_profiles,  # Current profile for each slice
         }
         
         return state, reward, done, info

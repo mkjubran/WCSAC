@@ -23,13 +23,13 @@ LAMBDA = 0.5    # λ: Weight for resource efficiency bonus
 W = 5           # Window size for β and CDF computation (None = ∞, 5 = last 5 DTIs)
 
 # Traffic Generation (Algorithm 4)
-TRAFFIC_PROFILES = ['low', 'high']  # Profile for each slice
+TRAFFIC_PROFILES = ['dynamic', 'dynamic']  # Profile for each slice
 # Options: 'uniform', 'extremely_low', 'low', 'medium', 'high', 'extremely_high', 'dynamic', 'external'
 
 # Dynamic Profile Configuration (applies to all slices using 'dynamic')
 DYNAMIC_PROFILE_CONFIG = {
-    'profile_set': ['low', 'medium', 'high'],  # Profiles to randomly select from
-    'change_period': 100  # Change profile every N DTIs
+    'profile_set': ['extremely_low','low', 'medium', 'high','extremely_high'],  # Profiles to randomly select from
+    'change_period': 200  # Change profile every N DTIs
 }
 # Example: TRAFFIC_PROFILES = ['dynamic', 'dynamic', 'high']
 #          Both dynamic slices will change every 100 DTIs
@@ -37,12 +37,12 @@ DYNAMIC_PROFILE_CONFIG = {
 #          Selections are independent per slice
 
 # QoS Tables
-QOS_TABLE_FILES = ['voIPFrameDelay', 'voIPFrameDelay']  # JSON file path for each slice's QoS table
+QOS_TABLE_FILES = ['qos_voip_all_metrics.json', 'qos_voip_all_metrics.json']  # JSON file path for each slice's QoS table
 # Example: ['qos_voip_all_metrics.json', 'qos_cbr_all_metrics.json']
 # Set to None to use default QoS model
 
 # QoS Metrics to Use
-QOS_METRICS = [None, None]  # Which metric to use from each QoS file
+QOS_METRICS = ['voIPFrameDelay', 'voIPFrameDelay']  # Which metric to use from each QoS file
 # Example: ['voIPFrameLoss', 'cbrFrameDelay']
 # Set to None to use the first available metric
 # 
@@ -74,7 +74,7 @@ T_MAX = 2000     # Maximum DTIs per episode
 # ============================================================================
 
 # Training Duration
-NUM_EPISODES = 1000  # E_max: Total episodes
+NUM_EPISODES = 100  # E_max: Total episodes
 MAX_DTIS = 2000      # T_max: DTIs per episode (same as T_MAX above)
 
 # Learning Rates
