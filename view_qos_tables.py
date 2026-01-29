@@ -313,7 +313,7 @@ def main():
         'qos_voip_all_metrics.json',
         'qos_cbr_all_metrics.json',
         'qos_video_all_metrics.json',
-        voip_metric='voIPFrameLoss',
+        voip_metric='voIPFrameDelay',
         cbr_metric='cbrFrameDelay',
         video_metric='rtVideoStreamingSegmentLoss'
     )

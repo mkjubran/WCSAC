@@ -8,12 +8,12 @@ Contains only the main parameters from LaTeX algorithms
 # ============================================================================
 
 # Network Topology
-K = 2           # Number of slices
+K = 3           # Number of slices
 C = 8           # Total RB capacity
 N = 8          # TTIs per DTI
 
 # QoS Parameters
-THRESHOLDS = [40, 40]  # τ_k: QoS threshold for each slice k
+THRESHOLDS = [40, 1600, 15]  # τ_k: QoS threshold for each slice k
 BETA_THRESH = 0.2         # β_thresh: Beta threshold (not used in current implementation)
 
 # Reward Parameter
@@ -23,7 +23,7 @@ LAMBDA = 0.5    # λ: Weight for resource efficiency bonus
 W = 5           # Window size for β and CDF computation (None = ∞, 5 = last 5 DTIs)
 
 # Traffic Generation (Algorithm 4)
-TRAFFIC_PROFILES = ['dynamic', 'dynamic']  # Profile for each slice
+TRAFFIC_PROFILES = ['dynamic', 'dynamic', 'dynamic']  # Profile for each slice
 # Options: 'uniform', 'extremely_low', 'low', 'medium', 'high', 'extremely_high', 'dynamic', 'external'
 
 # Dynamic Profile Configuration (applies to all slices using 'dynamic')
@@ -37,12 +37,12 @@ DYNAMIC_PROFILE_CONFIG = {
 #          Selections are independent per slice
 
 # QoS Tables
-QOS_TABLE_FILES = ['qos_voip_all_metrics.json', 'qos_voip_all_metrics.json']  # JSON file path for each slice's QoS table
+QOS_TABLE_FILES = ['qos_voip_all_metrics.json', 'qos_cbr_all_metrics.json', 'qos_video_all_metrics.json']  # JSON file path for each slice's QoS table
 # Example: ['qos_voip_all_metrics.json', 'qos_cbr_all_metrics.json']
 # Set to None to use default QoS model
 
 # QoS Metrics to Use
-QOS_METRICS = ['voIPFrameDelay', 'voIPFrameDelay']  # Which metric to use from each QoS file
+QOS_METRICS = ['voIPFrameDelay', 'cbrFrameDelay', 'rtVideoStreamingSegmentLoss']  # Which metric to use from each QoS file
 # Example: ['voIPFrameLoss', 'cbrFrameDelay']
 # Set to None to use the first available metric
 # 
@@ -66,7 +66,7 @@ QOS_METRICS = ['voIPFrameDelay', 'voIPFrameDelay']  # Which metric to use from e
 TRAFFIC_VALUES = list(range(5, 85, 5))  # T = {5, 10, 15, ..., 80}
 
 # Episode Length
-T_MAX = 2000     # Maximum DTIs per episode
+T_MAX = 10000     # Maximum DTIs per episode
 
 
 # ============================================================================
@@ -75,7 +75,7 @@ T_MAX = 2000     # Maximum DTIs per episode
 
 # Training Duration
 NUM_EPISODES = 100  # E_max: Total episodes
-MAX_DTIS = 2000      # T_max: DTIs per episode (same as T_MAX above)
+MAX_DTIS = 10000      # T_max: DTIs per episode (same as T_MAX above)
 
 # Learning Rates
 LR_ACTOR = 3e-4   # η_π: Actor learning rate
