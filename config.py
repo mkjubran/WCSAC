@@ -66,7 +66,7 @@ QOS_METRICS = ['voIPFrameDelay', 'cbrFrameDelay', 'rtVideoStreamingSegmentLoss']
 TRAFFIC_VALUES = list(range(5, 85, 5))  # T = {5, 10, 15, ..., 80}
 
 # Episode Length
-T_MAX = 10000     # Maximum DTIs per episode
+T_MAX = 2000     # Maximum DTIs per episode
 
 
 # ============================================================================
@@ -75,7 +75,7 @@ T_MAX = 10000     # Maximum DTIs per episode
 
 # Training Duration
 NUM_EPISODES = 100  # E_max: Total episodes
-MAX_DTIS = 10000      # T_max: DTIs per episode (same as T_MAX above)
+MAX_DTIS = 2000      # T_max: DTIs per episode (same as T_MAX above)
 
 # Learning Rates
 LR_ACTOR = 3e-4   # η_π: Actor learning rate
