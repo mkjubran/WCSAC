@@ -15,6 +15,15 @@ from network_env import NetworkEnvironment
 from sac_agent import SAC
 import config
 
+def set_seeds(seed):
+    """Set all random seeds"""
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
 
 def train_sac():
     """
