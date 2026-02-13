@@ -23,13 +23,22 @@ class TrafficGenerator:
     - external: Load from file/array
     """
     
-    def __init__(self, traffic_values: List[int] = None, dynamic_config: dict = None):
+    def __init__(self, traffic_values: List[int] = None, dynamic_config: dict = None, seed: int = None):
         """
         Args:
             traffic_values: Discrete traffic levels, e.g., [5, 10, 15, ..., 80]
             dynamic_config: Configuration for dynamic profile switching
                            {'profile_set': [...], 'change_period': int}
+            seed: Random seed for reproducibility
         """
+        # Set up seeded RNG FIRST
+        if seed is not None:
+            self.rng = np.random.RandomState(seed)
+            self.seed = seed
+        else:
+            self.rng = np.random.RandomState()
+            self.seed = None
+        
         if traffic_values is None:
             self.traffic_values = list(range(5, 85, 5))  # [5, 10, ..., 80]
         else:
@@ -95,7 +104,7 @@ class TrafficGenerator:
             if not valid_profiles:
                 raise ValueError("Dynamic profile_set must contain at least one non-dynamic profile")
             
-            selected_profile = np.random.choice(valid_profiles)
+            selected_profile = self.rng.choice(valid_profiles)
             self.current_profiles[slice_id] = selected_profile
         
         return self.current_profiles[slice_id]
@@ -144,7 +153,7 @@ class TrafficGenerator:
     
     def _generate_uniform(self, N: int) -> np.ndarray:
         """Uniform profile: x_i ~ Uniform(T)"""
-        return np.random.choice(self.T, size=N)
+        return self.rng.choice(self.T, size=N)
     
     def _generate_beta(self, N: int, alpha: float, beta_param: float) -> np.ndarray:
         """
@@ -154,8 +163,8 @@ class TrafficGenerator:
             N: Number of samples
             alpha, beta_param: Beta distribution parameters
         """
-        # Sample from Beta(alpha, beta) -> [0, 1]
-        u = beta.rvs(alpha, beta_param, size=N)
+        # Sample from Beta(alpha, beta) -> [0, 1] using seeded RNG
+        u = self.rng.beta(alpha, beta_param, size=N)
         
         # Quantize to discrete traffic values
         x = self._quantize(u)

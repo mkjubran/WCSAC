@@ -1,12 +1,14 @@
 """
-Network Resource Allocation Environment - Implements Algorithm 1 from LaTeX
-Multi-slice network with sliding window for beta and CDF computation
+Network Environment for Multi-Slice RAN Resource Allocation
+Enhanced with Multi-Metric QoS Support
+
+Supports both single-metric (backward compatible) and multi-metric QoS evaluation.
 """
 
 import numpy as np
 import pandas as pd
 import json
-from typing import Dict, List, Tuple, Optional
+from typing import List, Tuple, Dict
 from traffic_generation import TrafficGenerator
 
 
@@ -30,7 +32,10 @@ class NetworkEnvironment:
         traffic_profiles: List[str] = None,
         qos_tables: List[pd.DataFrame] = None,
         qos_table_files: List[str] = None,  # JSON file paths
-        qos_metrics: List[str] = None,  # NEW: Which metric to use per slice
+        qos_metrics: List[str] = None,  # Single metric per slice (backward compatible)
+        qos_metrics_multi: List[List[str]] = None,  # NEW: Multiple metrics per slice
+        thresholds_multi: List[List[float]] = None,  # NEW: Multiple thresholds per slice
+        qos_metric_directions: List[List[str]] = None,  # NEW: 'lower' or 'higher' for each metric
         dynamic_profile_config: dict = None,  # Config for dynamic profiles
         max_dtis: int = 200,  # T_max: Maximum DTIs per episode
         traffic_seed: int = None,  # Seed for traffic generation
@@ -57,6 +62,40 @@ class NetworkEnvironment:
         self.N = N
         self.lambda_reward = lambda_reward
         self.W = window_size  # Sliding window size
+        
+        # Multi-metric QoS configuration
+        if qos_metrics_multi is not None and thresholds_multi is not None:
+            # Multi-metric mode
+            self.use_multi_metric = True
+            self.qos_metrics_multi = qos_metrics_multi
+            self.thresholds_multi = thresholds_multi
+            self.qos_metric_directions = qos_metric_directions if qos_metric_directions else \
+                [['lower'] * len(qos_metrics_multi[k]) for k in range(K)]
+            
+            # For backward compatibility
+            self.thresholds = [thresholds_multi[k][0] for k in range(K)]
+            if qos_metrics is None:
+                self.qos_metrics = [qos_metrics_multi[k][0] for k in range(K)]
+            else:
+                self.qos_metrics = qos_metrics
+        else:
+            # Single-metric mode (backward compatible)
+            self.use_multi_metric = False
+            if thresholds is None:
+                self.thresholds = [0.2] * K
+            else:
+                self.thresholds = thresholds
+            
+            if qos_metrics is None:
+                self.qos_metrics = [None] * K
+            else:
+                self.qos_metrics = qos_metrics
+            
+            # Convert to multi-metric format internally
+            self.qos_metrics_multi = [[self.qos_metrics[k]] for k in range(K)]
+            self.thresholds_multi = [[self.thresholds[k]] for k in range(K)]
+            self.qos_metric_directions = [['lower'] for k in range(K)]
+        
         
         # Seeds
         self.traffic_seed = traffic_seed
@@ -280,38 +319,72 @@ class NetworkEnvironment:
             )
             self.X[k].extend(x_k)
         
-        # Step 2: Compute QoS using rounded actions
+        # Step 2: Compute QoS using rounded actions (MULTI-METRIC SUPPORT)
         r_used = np.round(action).astype(int)
         
         for k in range(self.K):
             rbs = int(np.clip(r_used[k], 1, self.C))
-            q_k = []
+            q_k_samples = []  # List of dicts, one per TTI
             
             # Get last N traffic values for this DTI
             traffic_values = self.X[k][-self.N:]
             
             for traffic in traffic_values:
-                # Lookup (μ, σ) from QoS table
-                key = (int(traffic), rbs)
-                if key in self.qos_tables[k]:
-                    mu, sigma = self.qos_tables[k][key]
-                else:
-                    # Nearest neighbor if exact match not found
-                    mu, sigma = self._nearest_qos(k, int(traffic), rbs)
+                qos_sample_dict = {}  # Store all metrics for this TTI
                 
-                # Sample from Gaussian
-                qos_value = np.random.normal(mu, sigma)
-                # Note: No clipping - QoS values can be any positive number
-                # (e.g., delay in ms can be > 1, loss % from QoS files is raw value)
-                qos_value = max(0, qos_value)  # Only ensure non-negative
-                q_k.append(qos_value)
+                # Sample each metric
+                for metric_name in self.qos_metrics_multi[k]:
+                    # Lookup (μ, σ) from QoS table
+                    key = (int(traffic), rbs)
+                    
+                    if isinstance(self.qos_tables[k], dict):
+                        # Multi-metric mode
+                        if metric_name in self.qos_tables[k] and key in self.qos_tables[k][metric_name]:
+                            mu, sigma = self.qos_tables[k][metric_name][key]
+                        else:
+                            mu, sigma = self._nearest_qos_multi(k, metric_name, int(traffic), rbs)
+                    else:
+                        # Backward compatible
+                        if key in self.qos_tables[k]:
+                            mu, sigma = self.qos_tables[k][key]
+                        else:
+                            mu, sigma = self._nearest_qos(k, int(traffic), rbs)
+                    
+                    # Sample from Gaussian
+                    qos_value = np.random.normal(mu, sigma)
+                    qos_value = max(0, qos_value)
+                    qos_sample_dict[metric_name] = qos_value
+                
+                q_k_samples.append(qos_sample_dict)
             
-            self.Q[k].extend(q_k)
+            self.Q[k].extend(q_k_samples)
         
-        # Step 3: Compute satisfaction vectors
+        # Step 3: Compute satisfaction vectors (MULTI-METRIC SUPPORT)
         for k in range(self.K):
-            for qos_val in self.Q[k][-self.N:]:
-                satisfied = 0 if qos_val <= self.thresholds[k] else 1
+            # Get last N QoS samples for this slice
+            recent_qos_samples = self.Q[k][-self.N:]
+            
+            for qos_dict in recent_qos_samples:
+                # Check ALL metrics for this TTI
+                all_metrics_satisfied = True
+                
+                for metric_idx, metric_name in enumerate(self.qos_metrics_multi[k]):
+                    qos_val = qos_dict.get(metric_name, 0)
+                    threshold = self.thresholds_multi[k][metric_idx]
+                    direction = self.qos_metric_directions[k][metric_idx]
+                    
+                    # Check based on direction
+                    if direction == 'lower':
+                        metric_satisfied = (qos_val <= threshold)
+                    else:  # 'higher'
+                        metric_satisfied = (qos_val >= threshold)
+                    
+                    if not metric_satisfied:
+                        all_metrics_satisfied = False
+                        break
+                
+                # 0 = satisfied, 1 = violated
+                satisfied = 0 if all_metrics_satisfied else 1
                 self.S[k].append(satisfied)
         
         # Step 4 & 5: Compute CDF and beta over sliding window
@@ -453,6 +526,20 @@ class NetworkEnvironment:
             if dist < min_dist:
                 min_dist = dist
                 best_mu, best_sigma = mu, sigma
+        
+        return best_mu, best_sigma
+    
+    def _nearest_qos_multi(self, k: int, metric_name: str, traffic: int, rbs: int) -> Tuple[float, float]:
+        """Find nearest QoS entry for a specific metric"""
+        min_dist = float('inf')
+        best_mu, best_sigma = 0.5, 0.02
+        
+        if metric_name in self.qos_tables[k]:
+            for (t, r), (mu, sigma) in self.qos_tables[k][metric_name].items():
+                dist = abs(t - traffic) + abs(r - rbs)
+                if dist < min_dist:
+                    min_dist = dist
+                    best_mu, best_sigma = mu, sigma
         
         return best_mu, best_sigma
     

@@ -1,6 +1,8 @@
 """
-SAC Training for Multi-Slice Resource Allocation - Implements Algorithm 2
-Main training loop with TensorBoard logging and visualization
+WCSAC Training for Multi-Slice Resource Allocation
+
+Worst-Case SAC training with adversarial scenario generation.
+Handles traffic uncertainty and QoS variations for robust policies.
 """
 
 import numpy as np
@@ -13,8 +15,9 @@ import os
 from datetime import datetime
 
 from network_env import NetworkEnvironment
-from sac_agent import SAC
+from wcsac_agent import WCSAC
 import config
+
 
 def set_seeds(seed):
     """Set all random seeds for reproducibility"""
@@ -26,15 +29,49 @@ def set_seeds(seed):
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
 
-def train_sac():
+
+def generate_worst_case_scenarios(state, next_state, reward, info, 
+                                  uncertainty_radius=0.1):
     """
-    Train SAC agent following Algorithm 2.
-    Uses parameters from config.py
+    Generate worst-case scenarios by perturbing state and reward.
     
-    Algorithm 2: SAC Training for Multi-Slice Resource Allocation
-    - Outer loop: E_max episodes
-    - Inner loop: T_max DTIs per episode
-    - Episodic learning: Reset() at start of each episode
+    Perturbations model:
+    - Traffic variations (± uncertainty_radius of current traffic)
+    - QoS metric variations
+    - Worst-case reward (penalized)
+    
+    Args:
+        state: Current state
+        next_state: Next state from environment
+        reward: Nominal reward
+        info: Environment info dict
+        uncertainty_radius: Size of uncertainty set
+        
+    Returns:
+        worst_case_reward: Pessimistic reward
+        worst_case_next_state: Perturbed next state
+    """
+    # Worst-case reward: reduce by uncertainty factor
+    # This makes the agent conservative
+    worst_case_reward = reward - abs(reward) * uncertainty_radius
+    
+    # Worst-case next state: perturb traffic and QoS components
+    # Identify which parts of state are traffic/QoS related
+    wc_next_state = next_state.copy()
+    
+    # Perturb state components (add noise to make it harder)
+    noise = np.random.randn(len(next_state)) * uncertainty_radius * np.abs(next_state + 1e-8)
+    wc_next_state = wc_next_state + noise
+    
+    # Ensure state remains valid (clip to reasonable ranges)
+    wc_next_state = np.clip(wc_next_state, -10, 10)
+    
+    return worst_case_reward, wc_next_state
+
+
+def train_wcsac():
+    """
+    Train WCSAC agent with worst-case robustness.
     """
     
     # Load configuration
@@ -51,12 +88,26 @@ def train_sac():
     os.makedirs(cfg['results_dir'], exist_ok=True)
     
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    run_name = f'sac_K{cfg["K"]}_W{cfg["window_size"]}_{timestamp}'
+    run_name = f'wcsac_K{cfg["K"]}_W{cfg["window_size"]}_{timestamp}'
     
     writer = SummaryWriter(os.path.join(cfg['tensorboard_dir'], run_name))
     
     # Print configuration
+    print("\n" + "="*70)
+    print("WORST-CASE SAC (WCSAC) TRAINING")
+    print("="*70)
     config.print_config()
+    
+    # WCSAC-specific parameters
+    kappa = getattr(config, 'WCSAC_KAPPA', 0.5)
+    uncertainty_radius = getattr(config, 'WCSAC_UNCERTAINTY_RADIUS', 0.1)
+    pessimism_penalty = getattr(config, 'WCSAC_PESSIMISM_PENALTY', 0.1)
+    
+    print(f"\nWCSAC Parameters:")
+    print(f"  Robustness (κ):         {kappa} (0=SAC, 1=worst-case)")
+    print(f"  Uncertainty radius:     {uncertainty_radius}")
+    print(f"  Pessimism penalty:      {pessimism_penalty}")
+    print("="*70)
     
     # Create environment
     env = NetworkEnvironment(
@@ -83,8 +134,8 @@ def train_sac():
     print(f"\nState dimension: {env.state_dim}")
     print(f"Action dimension: {env.action_dim}")
     
-    # Create SAC agent
-    agent = SAC(
+    # Create WCSAC agent
+    agent = WCSAC(
         state_dim=env.state_dim,
         action_dim=env.action_dim,
         capacity=cfg['C'],
@@ -92,6 +143,9 @@ def train_sac():
         lr_critic=cfg['lr_critic'],
         gamma=cfg['gamma'],
         tau=cfg['tau'],
+        kappa=kappa,
+        uncertainty_radius=uncertainty_radius,
+        pessimism_penalty=pessimism_penalty,
         device=cfg['device'],
         seed=config.NETWORK_SEED if hasattr(config, 'NETWORK_SEED') else None
     )
@@ -103,35 +157,47 @@ def train_sac():
     episode_rewards = []
     episode_betas = []
     episode_violations = []
+    episode_worst_case_rewards = []
     
-    print(f"\nStarting Training: {cfg['num_episodes']} episodes")
+    print(f"\nStarting WCSAC Training: {cfg['num_episodes']} episodes")
     print("=" * 70)
     
-    # Algorithm 2: Outer loop (episodes)
-    for episode in tqdm(range(1, cfg['num_episodes'] + 1), desc="Training"):
+    # Training loop
+    for episode in tqdm(range(1, cfg['num_episodes'] + 1), desc="WCSAC Training"):
         
-        # Reset environment (Algorithm 1: Reset())
+        # Reset environment
         state = env.reset()
         
         episode_reward = 0
         episode_beta_sum = 0
         num_violations = 0
+        episode_wc_reward = 0
         
-        # Algorithm 2: Inner loop (DTIs)
+        # Episode loop
         for dti in range(cfg['max_dtis']):
             
-            # Select action from policy
+            # Select action
             action = agent.select_action(state)
             
-            # Environment step (Algorithm 1: Step(a))
+            # Environment step
             next_state, reward, done, info = env.step(action)
             
-            # Store transition
-            agent.replay_buffer.push(state, action, reward, next_state, done)
+            # Generate worst-case scenarios
+            wc_reward, wc_next_state = generate_worst_case_scenarios(
+                state, next_state, reward, info, uncertainty_radius
+            )
             
-            # Log per-DTI metrics (for detailed analysis)
+            # Store transition with worst-case variants
+            agent.replay_buffer.push(
+                state, action, reward, next_state, done,
+                worst_case_reward=wc_reward,
+                worst_case_next_state=wc_next_state
+            )
+            
+            # Log per-DTI metrics
             global_step = episode * cfg['max_dtis'] + dti
             writer.add_scalar('dti/reward', reward, global_step)
+            writer.add_scalar('dti/worst_case_reward', wc_reward, global_step)
             writer.add_scalar('dti/beta', info['beta'], global_step)
             
             # Log actions per slice
@@ -142,40 +208,14 @@ def train_sac():
             for k in range(cfg['K']):
                 writer.add_scalar(f'dti/traffic_slice{k}', info['traffic'][k], global_step)
             
-            # Log active profiles per slice (for dynamic profiles)
-            for k in range(cfg['K']):
-                profile_map = {
-                    'uniform': 0, 'extremely_low': 1, 'low': 2,
-                    'medium': 3, 'high': 4, 'extremely_high': 5, 'external': 6
-                }
-                profile_name = str(info['active_profiles'][k])
-                profile_id = profile_map.get(profile_name, -1)
-                writer.add_scalar(f'dti/active_profile_slice{k}', profile_id, global_step)
-            
-            # Log specific episodes for detailed per-DTI analysis
-            # Log every 10th episode, first/last episodes, and episodes around milestones
-            log_this_episode = (
-                episode in [1, 2, 5, cfg['num_episodes']] or
-                episode % 10 == 0
-            )
-            
-            if log_this_episode:
-                writer.add_scalar(f'episode_{episode}/reward', reward, dti)
-                writer.add_scalar(f'episode_{episode}/beta', info['beta'], dti)
-                for k in range(cfg['K']):
-                    writer.add_scalar(f'episode_{episode}/action_slice{k}', action[k], dti)
-                    writer.add_scalar(f'episode_{episode}/traffic_slice{k}', info['traffic'][k], dti)
-                    profile_name = str(info['active_profiles'][k])
-                    profile_id = profile_map.get(profile_name, -1)
-                    writer.add_scalar(f'episode_{episode}/active_profile_slice{k}', profile_id, dti)
-            
             # Update statistics
             episode_reward += reward
+            episode_wc_reward += wc_reward
             episode_beta_sum += info['beta']
             if info['constraint_violated']:
                 num_violations += 1
             
-            # Train agent (if enough data)
+            # Train agent
             if len(agent.replay_buffer) >= cfg['min_buffer_size']:
                 metrics = agent.update(cfg['batch_size'])
                 
@@ -192,26 +232,33 @@ def train_sac():
         
         # Episode statistics
         avg_beta = episode_beta_sum / (dti + 1)
+        avg_wc_reward = episode_wc_reward / (dti + 1)
+        
         episode_rewards.append(episode_reward)
         episode_betas.append(avg_beta)
         episode_violations.append(num_violations)
+        episode_worst_case_rewards.append(episode_wc_reward)
         
         # Logging
         if episode % cfg['log_interval'] == 0:
             writer.add_scalar('episode/reward', episode_reward, episode)
+            writer.add_scalar('episode/worst_case_reward', episode_wc_reward, episode)
             writer.add_scalar('episode/avg_beta', avg_beta, episode)
             writer.add_scalar('episode/violations', num_violations, episode)
             writer.add_scalar('episode/buffer_size', len(agent.replay_buffer), episode)
             
-            # Moving averages (last 100 episodes)
+            # Moving averages
             if len(episode_rewards) >= 100:
                 avg_reward_100 = np.mean(episode_rewards[-100:])
                 avg_beta_100 = np.mean(episode_betas[-100:])
+                avg_wc_reward_100 = np.mean(episode_worst_case_rewards[-100:])
+                
                 writer.add_scalar('episode/avg_reward_100', avg_reward_100, episode)
                 writer.add_scalar('episode/avg_beta_100', avg_beta_100, episode)
+                writer.add_scalar('episode/avg_worst_case_reward_100', avg_wc_reward_100, episode)
             
             print(f"\nEpisode {episode}/{cfg['num_episodes']}:")
-            print(f"  Reward: {episode_reward:.2f}")
+            print(f"  Reward: {episode_reward:.2f} (WC: {episode_wc_reward:.2f})")
             print(f"  Avg Beta: {avg_beta:.4f}")
             print(f"  Violations: {num_violations}")
             print(f"  Buffer: {len(agent.replay_buffer)}")
@@ -225,75 +272,94 @@ def train_sac():
     # Final save
     final_path = os.path.join(cfg['checkpoint_dir'], f'{run_name}_final.pt')
     agent.save(final_path)
-    print(f"\nTraining complete! Final model saved: {final_path}")
+    print(f"\nWCSAC Training complete! Final model saved: {final_path}")
     
     # Close writer
     writer.close()
     
     # Plot training curves
-    plot_training_curves(episode_rewards, episode_betas, episode_violations, 
-                         cfg['checkpoint_dir'], run_name)
+    plot_wcsac_training_curves(
+        episode_rewards, episode_worst_case_rewards, episode_betas, 
+        episode_violations, cfg['checkpoint_dir'], run_name
+    )
     
     return agent, env, episode_rewards, episode_betas
 
 
-def plot_training_curves(rewards, betas, violations, save_dir, run_name):
-    """Plot and save training curves"""
+def plot_wcsac_training_curves(rewards, wc_rewards, betas, violations, 
+                               save_dir, run_name):
+    """Plot WCSAC training curves"""
     
-    fig, axes = plt.subplots(3, 1, figsize=(12, 10))
+    fig, axes = plt.subplots(4, 1, figsize=(12, 12))
     
     # Reward
-    axes[0].plot(rewards, alpha=0.3, label='Episode Reward')
+    axes[0].plot(rewards, alpha=0.3, label='Nominal Reward')
+    axes[0].plot(wc_rewards, alpha=0.3, label='Worst-Case Reward', color='red')
     if len(rewards) >= 10:
         rewards_smooth = np.convolve(rewards, np.ones(10)/10, mode='valid')
-        axes[0].plot(range(9, len(rewards)), rewards_smooth, label='Smoothed (10 ep)', linewidth=2)
+        wc_smooth = np.convolve(wc_rewards, np.ones(10)/10, mode='valid')
+        axes[0].plot(range(9, len(rewards)), rewards_smooth, 
+                    label='Smoothed Nominal', linewidth=2)
+        axes[0].plot(range(9, len(wc_rewards)), wc_smooth, 
+                    label='Smoothed WC', linewidth=2, color='darkred')
     axes[0].set_xlabel('Episode')
     axes[0].set_ylabel('Total Reward')
-    axes[0].set_title('Training Reward')
+    axes[0].set_title('WCSAC Training Reward (Nominal vs Worst-Case)')
     axes[0].legend()
     axes[0].grid(True, alpha=0.3)
     
-    # Beta
-    axes[1].plot(betas, alpha=0.3, label='Avg Beta')
-    if len(betas) >= 10:
-        betas_smooth = np.convolve(betas, np.ones(10)/10, mode='valid')
-        axes[1].plot(range(9, len(betas)), betas_smooth, label='Smoothed (10 ep)', linewidth=2)
-    axes[1].axhline(y=0.2, color='r', linestyle='--', label='Threshold (0.2)')
+    # Reward gap
+    gap = np.array(rewards) - np.array(wc_rewards)
+    axes[1].plot(gap, alpha=0.6, color='purple')
+    if len(gap) >= 10:
+        gap_smooth = np.convolve(gap, np.ones(10)/10, mode='valid')
+        axes[1].plot(range(9, len(gap)), gap_smooth, 
+                    label='Smoothed', linewidth=2, color='darkviolet')
     axes[1].set_xlabel('Episode')
-    axes[1].set_ylabel('Beta (Violation Ratio)')
-    axes[1].set_title('QoS Performance (Lower is Better)')
+    axes[1].set_ylabel('Reward Gap (Nominal - WC)')
+    axes[1].set_title('Robustness Gap')
     axes[1].legend()
     axes[1].grid(True, alpha=0.3)
     
-    # Violations
-    axes[2].plot(violations, alpha=0.6)
+    # Beta
+    axes[2].plot(betas, alpha=0.3, label='Avg Beta')
+    if len(betas) >= 10:
+        betas_smooth = np.convolve(betas, np.ones(10)/10, mode='valid')
+        axes[2].plot(range(9, len(betas)), betas_smooth, 
+                    label='Smoothed (10 ep)', linewidth=2)
+    axes[2].axhline(y=0.2, color='r', linestyle='--', label='Threshold (0.2)')
     axes[2].set_xlabel('Episode')
-    axes[2].set_ylabel('Constraint Violations')
-    axes[2].set_title('Constraint Violations per Episode')
+    axes[2].set_ylabel('Beta (Violation Ratio)')
+    axes[2].set_title('QoS Performance')
+    axes[2].legend()
     axes[2].grid(True, alpha=0.3)
+    
+    # Violations
+    axes[3].plot(violations, alpha=0.6, color='orange')
+    axes[3].set_xlabel('Episode')
+    axes[3].set_ylabel('Constraint Violations')
+    axes[3].set_title('Constraint Violations per Episode')
+    axes[3].grid(True, alpha=0.3)
     
     plt.tight_layout()
     
     # Save
     plot_path = os.path.join(save_dir, f'{run_name}_training_curves.png')
     plt.savefig(plot_path, dpi=150, bbox_inches='tight')
-    print(f"Training curves saved: {plot_path}")
+    print(f"WCSAC training curves saved: {plot_path}")
     plt.close()
 
 
 if __name__ == "__main__":
     
-    print("SAC Training for Multi-Slice Resource Allocation")
-    print("Implementing Algorithm 2 from LaTeX")
+    print("Worst-Case SAC Training for Multi-Slice Resource Allocation")
+    print("Robust RL with Adversarial Scenarios")
     print("=" * 70)
     
-    # Configuration loaded from config.py
-    # Edit config.py to change parameters
-    
     # Train
-    agent, env, rewards, betas = train_sac()
+    agent, env, rewards, betas = train_wcsac()
     
-    print("\nTraining Summary:")
+    print("\nWCSAC Training Summary:")
     print(f"  Final 100-episode avg reward: {np.mean(rewards[-100:]):.2f}")
     print(f"  Final 100-episode avg beta: {np.mean(betas[-100:]):.4f}")
     print(f"  Best episode reward: {np.max(rewards):.2f}")

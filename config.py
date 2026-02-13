@@ -19,7 +19,7 @@ NETWORK_SEED = 42
 DETERMINISTIC = False
 
 # QoS Parameters
-THRESHOLDS = [40, 1600, 15]  # τ_k: QoS threshold for each slice k
+THRESHOLDS = [40, 1600, 25]  # τ_k: QoS threshold for each slice k
 BETA_THRESH = 0.2         # β_thresh: Beta threshold (not used in current implementation)
 
 # Reward Parameter
@@ -34,7 +34,7 @@ TRAFFIC_PROFILES = ['dynamic', 'dynamic', 'dynamic']  # Profile for each slice
 
 # Dynamic Profile Configuration (applies to all slices using 'dynamic')
 DYNAMIC_PROFILE_CONFIG = {
-    'profile_set': ['low', 'medium', 'high'],  # Profiles to randomly select from
+    'profile_set': ['extremely_low', 'low', 'medium', 'high', 'extremely_high'],  # Profiles to randomly select from
     'change_period': 200  # Change profile every N DTIs
 }
 # Example: TRAFFIC_PROFILES = ['dynamic', 'dynamic', 'high']

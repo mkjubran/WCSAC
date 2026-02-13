@@ -302,7 +302,9 @@ if __name__ == "__main__":
         qos_table_files=cfg['qos_table_files'],
         qos_metrics=cfg['qos_metrics'],
         dynamic_profile_config=cfg['dynamic_profile_config'],
-        max_dtis=cfg['max_dtis']
+        max_dtis=cfg['max_dtis'],
+        traffic_seed=config.TRAFFIC_SEED if hasattr(config, 'TRAFFIC_SEED') else None,
+        profile_seed=config.PROFILE_SEED if hasattr(config, 'PROFILE_SEED') else None
     )
     
     # Create agent
@@ -310,7 +312,8 @@ if __name__ == "__main__":
         state_dim=env.state_dim,
         action_dim=env.action_dim,
         capacity=env.C,
-        device=cfg['device']
+        device=cfg['device'],
+        seed=config.NETWORK_SEED if hasattr(config, 'NETWORK_SEED') else None
     )
     
     # Load if checkpoint exists

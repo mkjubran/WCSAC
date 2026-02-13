@@ -20,9 +20,9 @@ from datetime import datetime
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-from network_env import NetworkEnvironment
+from network_env_multi_metric import NetworkEnvironment
 from baseline_policies import create_baseline
-import config
+import config_multi_metric as config
 
 
 def evaluate_baseline(baseline_policy, env, num_episodes=100, policy_name="Policy"):
@@ -315,7 +315,10 @@ def main():
         window_size=cfg['window_size'],
         traffic_profiles=cfg['traffic_profiles'],
         qos_table_files=cfg['qos_table_files'],
-        qos_metrics=cfg['qos_metrics'],
+        qos_metrics=cfg.get('qos_metrics'),
+        qos_metrics_multi=cfg.get('qos_metrics_multi'),  # NEW: Multi-metric support
+        thresholds_multi=cfg.get('thresholds_multi'),  # NEW
+        qos_metric_directions=cfg.get('qos_metric_directions'),  # NEW
         dynamic_profile_config=cfg['dynamic_profile_config'],
         max_dtis=cfg['max_dtis'],
         traffic_seed=config.TRAFFIC_SEED if hasattr(config, 'TRAFFIC_SEED') else None,

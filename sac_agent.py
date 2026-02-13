@@ -143,7 +143,8 @@ class SAC:
         tau: float = 0.005,
         alpha: float = 0.2,
         target_entropy: float = None,
-        device: str = 'cpu'
+        device: str = 'cpu',
+        seed: int = None
     ):
         """
         Args:
@@ -158,12 +159,19 @@ class SAC:
             alpha: Initial temperature
             target_entropy: Target entropy (if None, uses -dim(A))
             device: 'cpu' or 'cuda'
+            seed: Random seed for network initialization
         """
         self.device = torch.device(device)
         self.gamma = gamma
         self.tau = tau
         self.action_dim = action_dim
         self.capacity = capacity
+        
+        # Set seed for network initialization
+        if seed is not None:
+            torch.manual_seed(seed)
+            if torch.cuda.is_available():
+                torch.cuda.manual_seed_all(seed)
         
         # Networks
         self.actor = Actor(state_dim, action_dim, capacity).to(self.device)

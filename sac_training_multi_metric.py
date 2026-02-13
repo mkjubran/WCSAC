@@ -12,9 +12,9 @@ from tqdm import tqdm
 import os
 from datetime import datetime
 
-from network_env import NetworkEnvironment
+from network_env_multi_metric import NetworkEnvironment
 from sac_agent import SAC
-import config
+import config_multi_metric as config
 
 def set_seeds(seed):
     """Set all random seeds for reproducibility"""
@@ -58,7 +58,7 @@ def train_sac():
     # Print configuration
     config.print_config()
     
-    # Create environment
+    # Create environment with multi-metric QoS support
     env = NetworkEnvironment(
         K=cfg['K'],
         C=cfg['C'],
@@ -68,25 +68,41 @@ def train_sac():
         window_size=cfg['window_size'],
         traffic_profiles=cfg['traffic_profiles'],
         qos_table_files=cfg['qos_table_files'],
-        qos_metrics=cfg['qos_metrics'],
+        qos_metrics=cfg.get('qos_metrics'),
+        qos_metrics_multi=cfg.get('qos_metrics_multi'),  # NEW: Multi-metric support
+        thresholds_multi=cfg.get('thresholds_multi'),  # NEW
+        qos_metric_directions=cfg.get('qos_metric_directions'),  # NEW
         dynamic_profile_config=cfg['dynamic_profile_config'],
         max_dtis=cfg['max_dtis'],
         traffic_seed=config.TRAFFIC_SEED if hasattr(config, 'TRAFFIC_SEED') else None,
         profile_seed=config.PROFILE_SEED if hasattr(config, 'PROFILE_SEED') else None
     )
     
+    # Print QoS mode
+    if cfg.get('use_multi_metric_qos'):
+        print(f"✓ Using MULTI-METRIC QoS mode")
+        for k in range(cfg['K']):
+            metrics = cfg['qos_metrics_multi'][k]
+            print(f"  Slice {k}: {len(metrics)} metrics - {', '.join(metrics)}")
+    else:
+        print(f"✓ Using SINGLE-METRIC QoS mode (backward compatible)")
+    
     if hasattr(config, 'TRAFFIC_SEED'):
         print(f"✓ Traffic generator seed: {config.TRAFFIC_SEED}")
     if hasattr(config, 'PROFILE_SEED'):
         print(f"✓ Profile manager seed: {config.PROFILE_SEED}")
     
-    print(f"\nState dimension: {env.state_dim}")
-    print(f"Action dimension: {env.action_dim}")
+    # Get dimensions (call the property methods)
+    state_dim = env.state_dim
+    action_dim = env.action_dim
+    
+    print(f"\nState dimension: {state_dim}")
+    print(f"Action dimension: {action_dim}")
     
     # Create SAC agent
     agent = SAC(
-        state_dim=env.state_dim,
-        action_dim=env.action_dim,
+        state_dim=state_dim,
+        action_dim=action_dim,
         capacity=cfg['C'],
         lr_actor=cfg['lr_actor'],
         lr_critic=cfg['lr_critic'],
