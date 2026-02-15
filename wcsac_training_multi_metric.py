@@ -120,13 +120,15 @@ def train_wcsac():
         traffic_profiles=cfg['traffic_profiles'],
         qos_table_files=cfg['qos_table_files'],
         qos_metrics=cfg.get('qos_metrics'),
-        qos_metrics_multi=cfg.get('qos_metrics_multi'),  # NEW: Multi-metric support
-        thresholds_multi=cfg.get('thresholds_multi'),  # NEW
-        qos_metric_directions=cfg.get('qos_metric_directions'),  # NEW
+        qos_metrics_multi=cfg.get('qos_metrics_multi'),  # Multi-metric support
+        thresholds_multi=cfg.get('thresholds_multi'),
+        qos_metric_directions=cfg.get('qos_metric_directions'),
         dynamic_profile_config=cfg['dynamic_profile_config'],
         max_dtis=cfg['max_dtis'],
         traffic_seed=config.TRAFFIC_SEED if hasattr(config, 'TRAFFIC_SEED') else None,
-        profile_seed=config.PROFILE_SEED if hasattr(config, 'PROFILE_SEED') else None
+        profile_seed=config.PROFILE_SEED if hasattr(config, 'PROFILE_SEED') else None,
+        use_efficient_allocation=cfg.get('use_efficient_allocation', False),  # NEW: Efficient allocation
+        unused_capacity_reward_weight=cfg.get('unused_capacity_reward_weight', 0.0),  # NEW
     )
     
     # Print QoS mode
@@ -137,6 +139,14 @@ def train_wcsac():
             print(f"  Slice {k}: {len(metrics)} metrics - {', '.join(metrics)}")
     else:
         print(f"✓ Using SINGLE-METRIC QoS mode (backward compatible)")
+    
+    # Print allocation mode
+    if cfg.get('use_efficient_allocation'):
+        print(f"✓ Using EFFICIENT RESOURCE ALLOCATION mode (K+1 actions)")
+        print(f"  Actor output dimension: {cfg['K']+1} (K slices + 1 null)")
+        print(f"  Unused capacity reward weight: {cfg.get('unused_capacity_reward_weight', 0.0)}")
+    else:
+        print(f"✓ Using STANDARD ALLOCATION mode (K actions, sum=C)")
     
     if hasattr(config, 'TRAFFIC_SEED'):
         print(f"✓ Traffic generator seed: {config.TRAFFIC_SEED}")
@@ -163,7 +173,8 @@ def train_wcsac():
         uncertainty_radius=uncertainty_radius,
         pessimism_penalty=pessimism_penalty,
         device=cfg['device'],
-        seed=config.NETWORK_SEED if hasattr(config, 'NETWORK_SEED') else None
+        seed=config.NETWORK_SEED if hasattr(config, 'NETWORK_SEED') else None,
+        use_efficient_allocation=cfg.get('use_efficient_allocation', False),  # NEW
     )
     
     if hasattr(config, 'NETWORK_SEED'):

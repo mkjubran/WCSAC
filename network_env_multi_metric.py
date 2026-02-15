@@ -40,6 +40,8 @@ class NetworkEnvironment:
         max_dtis: int = 200,  # T_max: Maximum DTIs per episode
         traffic_seed: int = None,  # Seed for traffic generation
         profile_seed: int = None,  # Seed for dynamic profile selection
+        use_efficient_allocation: bool = False,  # NEW: Enable efficient resource allocation
+        unused_capacity_reward_weight: float = 0.0,  # NEW: Reward weight for unused capacity
     ):
         """
         Args:
@@ -101,6 +103,10 @@ class NetworkEnvironment:
         self.traffic_seed = traffic_seed
         self.profile_seed = profile_seed if profile_seed is not None else traffic_seed
         
+        # Efficient allocation mode
+        self.use_efficient_allocation = use_efficient_allocation
+        self.unused_reward_weight = unused_capacity_reward_weight
+        
         # Thresholds
         if thresholds is None:
             self.thresholds = [0.2] * K  # Default 20% for all slices
@@ -160,23 +166,22 @@ class NetworkEnvironment:
     
     def _load_qos_tables_from_files(self, qos_table_files: List[str]):
         """
-        Load QoS tables from JSON files.
+        Load QoS tables from JSON files with FULL multi-metric support.
         
-        Supports two formats:
+        In multi-metric mode:
+        - Loads ALL metrics specified in qos_metrics_multi[k]
+        - Stores as dict: {metric_name: {(traffic, rbs): (mu, sigma)}}
         
-        1. Single-metric format:
+        In single-metric mode (backward compatible):
+        - Loads single metric
+        - Stores as dict: {(traffic, rbs): (mu, sigma)}
+        
+        JSON Format:
         {
-          "5": {
-            "1": {"mu": 0.15, "sigma": 0.02}
-          }
-        }
-        
-        2. Multi-metric format:
-        {
-          "5": {
-            "1": {
+          "5": {                          # UE count (traffic)
+            "1": {                        # RB allocation
               "metric1": {"mu": 0.15, "sigma": 0.02},
-              "metric2": {"mu": 5.6, "sigma": 3.1}
+              "metric2": {"mu": 5.6, "variance": 3.1}
             }
           }
         }
@@ -185,77 +190,162 @@ class NetworkEnvironment:
         
         for k in range(self.K):
             if qos_table_files[k] is None:
-                # Use default for this slice
-                table = {}
-                for traffic in range(5, 85, 5):
-                    for rbs in range(1, self.C + 1):
-                        mu = max(0.01, min(0.95, (traffic / 100) * (self.C / (rbs + 1))))
-                        sigma = 0.02
-                        table[(traffic, rbs)] = (mu, sigma)
-                self.qos_tables.append(table)
+                # Use default tables for this slice
+                if self.use_multi_metric:
+                    # Create default table for each metric
+                    tables_dict = {}
+                    for metric_name in self.qos_metrics_multi[k]:
+                        table = {}
+                        for traffic in range(5, 85, 5):
+                            for rbs in range(1, self.C + 1):
+                                mu = max(0.01, min(0.95, (traffic / 100) * (self.C / (rbs + 1))))
+                                sigma = 0.02
+                                table[(traffic, rbs)] = (mu, sigma)
+                        tables_dict[metric_name] = table
+                    self.qos_tables.append(tables_dict)
+                else:
+                    # Single-metric: single table
+                    table = {}
+                    for traffic in range(5, 85, 5):
+                        for rbs in range(1, self.C + 1):
+                            mu = max(0.01, min(0.95, (traffic / 100) * (self.C / (rbs + 1))))
+                            sigma = 0.02
+                            table[(traffic, rbs)] = (mu, sigma)
+                    self.qos_tables.append(table)
             else:
                 # Load from JSON file
                 try:
                     with open(qos_table_files[k], 'r') as f:
                         json_data = json.load(f)
                     
-                    table = {}
-                    for traffic_str, rbs_dict in json_data.items():
-                        traffic = int(traffic_str)
-                        for rbs_str, qos_data in rbs_dict.items():
-                            rbs = int(rbs_str)
+                    if self.use_multi_metric:
+                        # Multi-metric mode: Load ALL metrics for this slice
+                        tables_dict = {}
+                        
+                        for metric_name in self.qos_metrics_multi[k]:
+                            table = {}
+                            metrics_found = 0
                             
-                            # Check if multi-metric format
-                            if isinstance(qos_data, dict) and 'mu' in qos_data:
-                                # Single-metric format
-                                mu = qos_data['mu']
-                                sigma = qos_data['sigma']
-                            else:
-                                # Multi-metric format - select specific metric
-                                metric_to_use = self.qos_metrics[k]
-                                
-                                if metric_to_use is None:
-                                    # Use first available metric
-                                    metric_to_use = list(qos_data.keys())[0]
-                                    if k == 0:  # Only print once
-                                        print(f"  No metric specified for slice {k}, using: {metric_to_use}")
-                                
-                                if metric_to_use not in qos_data:
-                                    raise KeyError(f"Metric '{metric_to_use}' not found in QoS file for slice {k}")
-                                
-                                mu = qos_data[metric_to_use]['mu']
-                                sigma = qos_data[metric_to_use]['sigma']
+                            for traffic_str, rbs_dict in json_data.items():
+                                traffic = int(traffic_str)
+                                for rbs_str, metrics_data in rbs_dict.items():
+                                    rbs = int(rbs_str)
+                                    
+                                    # Check if this is multi-metric JSON format
+                                    if metric_name in metrics_data:
+                                        # Found the metric
+                                        metric_data = metrics_data[metric_name]
+                                        mu = metric_data['mu']
+                                        
+                                        # Handle both 'sigma' and 'variance'
+                                        if 'sigma' in metric_data:
+                                            sigma = metric_data['sigma']
+                                        elif 'variance' in metric_data:
+                                            import math
+                                            sigma = math.sqrt(metric_data['variance'])
+                                        else:
+                                            sigma = 0.02  # Default
+                                        
+                                        table[(traffic, rbs)] = (mu, sigma)
+                                        metrics_found += 1
+                                    elif 'mu' in metrics_data and len(self.qos_metrics_multi[k]) == 1:
+                                        # Single-metric JSON format with only one metric needed
+                                        mu = metrics_data['mu']
+                                        sigma = metrics_data.get('sigma', 0.02)
+                                        table[(traffic, rbs)] = (mu, sigma)
+                                        metrics_found += 1
                             
-                            table[(traffic, rbs)] = (mu, sigma)
+                            if metrics_found == 0:
+                                print(f"Warning: Metric '{metric_name}' not found in {qos_table_files[k]}")
+                                print(f"         Using default QoS model for this metric")
+                                # Create default for this metric
+                                for traffic in range(5, 85, 5):
+                                    for rbs in range(1, self.C + 1):
+                                        mu = max(0.01, min(0.95, (traffic / 100) * (self.C / (rbs + 1))))
+                                        sigma = 0.02
+                                        table[(traffic, rbs)] = (mu, sigma)
+                            
+                            tables_dict[metric_name] = table
+                        
+                        self.qos_tables.append(tables_dict)
+                        print(f"✓ Loaded {len(tables_dict)} metrics for slice {k}: {list(tables_dict.keys())}")
                     
-                    self.qos_tables.append(table)
-                    
-                    metric_info = f" (using metric: {self.qos_metrics[k]})" if self.qos_metrics[k] else ""
-                    print(f"Loaded QoS table for slice {k} from {qos_table_files[k]}{metric_info}")
-                    
+                    else:
+                        # Single-metric mode (backward compatible)
+                        table = {}
+                        metric_to_use = self.qos_metrics[k]
+                        
+                        for traffic_str, rbs_dict in json_data.items():
+                            traffic = int(traffic_str)
+                            for rbs_str, qos_data in rbs_dict.items():
+                                rbs = int(rbs_str)
+                                
+                                # Check format
+                                if isinstance(qos_data, dict) and 'mu' in qos_data:
+                                    # Single-metric JSON format
+                                    mu = qos_data['mu']
+                                    sigma = qos_data.get('sigma', 0.02)
+                                elif metric_to_use and metric_to_use in qos_data:
+                                    # Multi-metric JSON, extract one metric
+                                    metric_data = qos_data[metric_to_use]
+                                    mu = metric_data['mu']
+                                    sigma = metric_data.get('sigma', 0.02)
+                                else:
+                                    # Unknown format, use default
+                                    continue
+                                
+                                table[(traffic, rbs)] = (mu, sigma)
+                        
+                        self.qos_tables.append(table)
+                        print(f"✓ Loaded single metric for slice {k}: {metric_to_use}")
+                
                 except FileNotFoundError:
                     print(f"Warning: QoS file {qos_table_files[k]} not found for slice {k}")
                     print(f"Using default QoS model for slice {k}")
                     # Fallback to default
-                    table = {}
-                    for traffic in range(5, 85, 5):
-                        for rbs in range(1, self.C + 1):
-                            mu = max(0.01, min(0.95, (traffic / 100) * (self.C / (rbs + 1))))
-                            sigma = 0.02
-                            table[(traffic, rbs)] = (mu, sigma)
-                    self.qos_tables.append(table)
+                    if self.use_multi_metric:
+                        tables_dict = {}
+                        for metric_name in self.qos_metrics_multi[k]:
+                            table = {}
+                            for traffic in range(5, 85, 5):
+                                for rbs in range(1, self.C + 1):
+                                    mu = max(0.01, min(0.95, (traffic / 100) * (self.C / (rbs + 1))))
+                                    sigma = 0.02
+                                    table[(traffic, rbs)] = (mu, sigma)
+                            tables_dict[metric_name] = table
+                        self.qos_tables.append(tables_dict)
+                    else:
+                        table = {}
+                        for traffic in range(5, 85, 5):
+                            for rbs in range(1, self.C + 1):
+                                mu = max(0.01, min(0.95, (traffic / 100) * (self.C / (rbs + 1))))
+                                sigma = 0.02
+                                table[(traffic, rbs)] = (mu, sigma)
+                        self.qos_tables.append(table)
                 
                 except (json.JSONDecodeError, KeyError, ValueError) as e:
                     print(f"Error parsing QoS file {qos_table_files[k]}: {e}")
                     print(f"Using default QoS model for slice {k}")
-                    # Fallback to default
-                    table = {}
-                    for traffic in range(5, 85, 5):
-                        for rbs in range(1, self.C + 1):
-                            mu = max(0.01, min(0.95, (traffic / 100) * (self.C / (rbs + 1))))
-                            sigma = 0.02
-                            table[(traffic, rbs)] = (mu, sigma)
-                    self.qos_tables.append(table)
+                    # Fallback to default (same as FileNotFoundError)
+                    if self.use_multi_metric:
+                        tables_dict = {}
+                        for metric_name in self.qos_metrics_multi[k]:
+                            table = {}
+                            for traffic in range(5, 85, 5):
+                                for rbs in range(1, self.C + 1):
+                                    mu = max(0.01, min(0.95, (traffic / 100) * (self.C / (rbs + 1))))
+                                    sigma = 0.02
+                                    table[(traffic, rbs)] = (mu, sigma)
+                            tables_dict[metric_name] = table
+                        self.qos_tables.append(tables_dict)
+                    else:
+                        table = {}
+                        for traffic in range(5, 85, 5):
+                            for rbs in range(1, self.C + 1):
+                                mu = max(0.01, min(0.95, (traffic / 100) * (self.C / (rbs + 1))))
+                                sigma = 0.02
+                                table[(traffic, rbs)] = (mu, sigma)
+                        self.qos_tables.append(table)
     
     def reset(self) -> np.ndarray:
         """
@@ -393,7 +483,16 @@ class NetworkEnvironment:
         beta = self._compute_beta(n_start, n_end)
         
         # Step 6: Compute reward
-        reward = -beta + self.lambda_reward * (self.C - np.sum(action)) / self.C
+        used_capacity = np.sum(action)
+        unused_capacity = self.C - used_capacity
+        
+        # Base reward: -beta + lambda * (unused / C)
+        reward = -beta + self.lambda_reward * (unused_capacity / self.C)
+        
+        # In efficient allocation mode, add bonus for saving resources
+        if self.use_efficient_allocation and self.unused_reward_weight > 0:
+            efficiency_bonus = self.unused_reward_weight * (unused_capacity / self.C)
+            reward += efficiency_bonus
         
         # Step 7: Build state and check if done
         state = self._build_state(beta, cdfs)
@@ -422,6 +521,9 @@ class NetworkEnvironment:
             'constraint_violated': False,
             'traffic': traffic_per_slice,  # Average traffic per slice in this DTI
             'active_profiles': active_profiles,  # Current profile for each slice
+            'used_capacity': used_capacity,  # NEW: Track actual capacity used
+            'unused_capacity': unused_capacity,  # NEW: Track unused capacity
+            'capacity_utilization': used_capacity / self.C,  # NEW: Utilization percentage
         }
         
         return state, reward, done, info

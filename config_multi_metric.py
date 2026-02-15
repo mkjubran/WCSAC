@@ -61,29 +61,35 @@ QOS_TABLE_FILES = [
 ]
 
 # NEW: List of lists - each inner list contains metrics for that slice
+# Available metrics (check your JSON files):
+#   VoIP: voIPFrameLoss, voIPFrameDelay, voIPJitter, voIPReceivedThroughput, etc.
+#   CBR: cbrFrameDelay, cbrReceivedThroughput
+#   Video: rtVideoStreamingEnd2endDelaySegment, rtVideoStreamingSegmentLoss
+
 QOS_METRICS_MULTI = [
     # Slice 0 (VoIP): Must satisfy BOTH delay AND loss
-    ['voIPFrameDelay', 'voIPFrameLoss'],
+    ['voIPFrameDelay', 'voIPFrameLoss', 'voIPJitter'],
     
     # Slice 1 (CBR): Must satisfy BOTH delay AND throughput
-    ['cbrFrameDelay', 'cbrReceivedThroughput'],
+    ['cbrFrameDelay'],
     
     # Slice 2 (Video): Must satisfy BOTH segment loss AND delay
-    ['rtVideoStreamingSegmentLoss', 'rtVideoStreamingEnd2endDelaySegment']
+    ['rtVideoStreamingSegmentLoss']
 ]
 
 # NEW: List of lists - thresholds corresponding to each metric
 # Format: [[thresholds for slice 0], [thresholds for slice 1], ...]
 THRESHOLDS_MULTI = [
     # Slice 0: [delay threshold, loss threshold]
-    [40, 0.05],      # delay <= 40ms AND loss <= 5%
+    [40, 0.5, 75],      # delay <= 40ms AND loss <= 5%
     
     # Slice 1: [delay threshold, throughput threshold (minimum)]
-    [1600, 500000],  # delay <= 1600ms AND throughput >= 500 kbps
+    [1600],  # delay <= 1600ms AND throughput >= 500 kbps
     
     # Slice 2: [loss threshold, delay threshold]
-    [25, 500]        # loss <= 15% AND delay <= 500ms
+    [25]        # loss <= 15% AND delay <= 500ms
 ]
+
 
 # NEW: Specify which metrics are "lower is better" vs "higher is better"
 # Format: [[directions for slice 0], [directions for slice 1], ...]
@@ -91,13 +97,13 @@ THRESHOLDS_MULTI = [
 # 'higher' = metric should be above threshold (throughput, rate)
 QOS_METRIC_DIRECTIONS = [
     # Slice 0
-    ['lower', 'lower'],     # delay: lower is better, loss: lower is better
+    ['lower', 'lower', 'lower'],     # delay: lower is better, loss: lower is better
     
     # Slice 1
-    ['lower', 'higher'],    # delay: lower is better, throughput: higher is better
+    ['lower'],    # delay: lower is better, throughput: higher is better
     
     # Slice 2
-    ['lower', 'lower']      # loss: lower is better, delay: lower is better
+    ['lower']      # loss: lower is better, delay: lower is better
 ]
 
 # Beta threshold (overall QoS violation ratio target)
@@ -135,22 +141,39 @@ LAMBDA = 0.5    # λ: Weight for resource efficiency bonus
 W = 5           # Window size for β and CDF computation
 
 # ============================================================================
+# EFFICIENT RESOURCE ALLOCATION MODE
+# ============================================================================
+
+# Enable efficient resource allocation (K+1 actions with "null slice")
+# When True: Agent can choose to NOT allocate all capacity (save resources)
+# When False: Agent must allocate all capacity (standard SAC, sum = C)
+USE_EFFICIENT_ALLOCATION = False #True
+
+# Reward weight for unused capacity (only used if USE_EFFICIENT_ALLOCATION=True)
+# Positive value: Rewards saving resources (encourages efficiency)
+# Zero: Neutral (no reward/penalty for unused capacity)
+# Negative: Penalizes unused capacity (encourages full allocation)
+UNUSED_CAPACITY_REWARD_WEIGHT = 0.1
+
+# How efficient allocation works:
+# - Actor output dimension: K+1 (K slices + 1 "null slice")
+# - After softmax: allocations sum to C
+# - First K allocations go to actual slices
+# - Last allocation represents "saved/unused" capacity
+# - Environment receives only K actions (sum may be < C)
+# - Constraint: sum(allocations) ≤ C (enforced, but not required to equal C)
+
+# ============================================================================
 # TRAFFIC GENERATION
 # ============================================================================
 
 TRAFFIC_PROFILES = ['dynamic', 'dynamic', 'dynamic']
-# Options: 'uniform', 'extremely_low', 'low', 'medium', 'high', 'extremely_high', 'dynamic', 'external'
 
 # Dynamic Profile Configuration
 DYNAMIC_PROFILE_CONFIG = {
-    'profile_set': ['extremely_low', 'low', 'medium', 'high', 'extremely_high'],
+    'profile_set': ['low', 'medium', 'high'],
     'change_period': 200
 }
-# Example: TRAFFIC_PROFILES = ['dynamic', 'dynamic', 'high']
-# Both dynamic slices will change every 100 DTIs
-# Each randomly selects from ['low', 'medium', 'high']
-# Selections are independent per slice
-
 
 # Traffic Values
 TRAFFIC_VALUES = list(range(5, 85, 5))
@@ -229,6 +252,10 @@ def get_config():
         'dynamic_profile_config': DYNAMIC_PROFILE_CONFIG,
         'max_dtis': T_MAX,
         
+        # Efficient allocation
+        'use_efficient_allocation': USE_EFFICIENT_ALLOCATION,
+        'unused_capacity_reward_weight': UNUSED_CAPACITY_REWARD_WEIGHT,
+        
         # SAC
         'lr_actor': LR_ACTOR,
         'lr_critic': LR_CRITIC,
@@ -292,6 +319,19 @@ def print_config():
     print(f"    Change period:      {DYNAMIC_PROFILE_CONFIG['change_period']} DTIs")
     print(f"  QoS table files:      {QOS_TABLE_FILES}")
     print(f"  T_max (max DTIs):     {T_MAX}")
+    
+    print("\n[RESOURCE ALLOCATION MODE]")
+    if USE_EFFICIENT_ALLOCATION:
+        print(f"  Mode:                 EFFICIENT (K+1 actions)")
+        print(f"  Actor output dim:     {K+1} (K slices + 1 null)")
+        print(f"  Unused reward weight: {UNUSED_CAPACITY_REWARD_WEIGHT}")
+        print(f"  Constraint:           sum(actions) ≤ C")
+        print(f"  Benefit:              Agent can save resources when not needed")
+    else:
+        print(f"  Mode:                 STANDARD (K actions)")
+        print(f"  Actor output dim:     {K}")
+        print(f"  Constraint:           sum(actions) = C (softmax guaranteed)")
+        print(f"  Behavior:             All capacity always allocated")
     
     print("\n[SAC - Algorithm 2]")
     print(f"  E_max (episodes):     {NUM_EPISODES}")

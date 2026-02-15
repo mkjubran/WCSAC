@@ -144,7 +144,8 @@ class SAC:
         alpha: float = 0.2,
         target_entropy: float = None,
         device: str = 'cpu',
-        seed: int = None
+        seed: int = None,
+        use_efficient_allocation: bool = False  # NEW: Enable K+1 allocation mode
     ):
         """
         Args:
@@ -160,12 +161,25 @@ class SAC:
             target_entropy: Target entropy (if None, uses -dim(A))
             device: 'cpu' or 'cuda'
             seed: Random seed for network initialization
+            use_efficient_allocation: If True, actor outputs K+1 actions (K slices + 1 null)
         """
         self.device = torch.device(device)
         self.gamma = gamma
         self.tau = tau
-        self.action_dim = action_dim
         self.capacity = capacity
+        
+        # Efficient allocation mode
+        self.use_efficient_allocation = use_efficient_allocation
+        self.num_slices = action_dim  # K (actual number of slices)
+        
+        if use_efficient_allocation:
+            # Actor outputs K+1 (K slices + 1 "null slice" for unused capacity)
+            self.actor_action_dim = action_dim + 1
+            self.action_dim = action_dim  # Critics still see K actions
+        else:
+            # Standard mode: Actor outputs K (all capacity must be allocated)
+            self.actor_action_dim = action_dim
+            self.action_dim = action_dim
         
         # Set seed for network initialization
         if seed is not None:
@@ -174,14 +188,15 @@ class SAC:
                 torch.cuda.manual_seed_all(seed)
         
         # Networks
-        self.actor = Actor(state_dim, action_dim, capacity).to(self.device)
+        # Actor outputs actor_action_dim (K or K+1), critics see action_dim (K)
+        self.actor = Actor(state_dim, self.actor_action_dim, capacity).to(self.device)
         
-        self.critic1 = Critic(state_dim, action_dim).to(self.device)
-        self.critic2 = Critic(state_dim, action_dim).to(self.device)
+        self.critic1 = Critic(state_dim, self.action_dim).to(self.device)
+        self.critic2 = Critic(state_dim, self.action_dim).to(self.device)
         
         # Target critics
-        self.critic1_target = Critic(state_dim, action_dim).to(self.device)
-        self.critic2_target = Critic(state_dim, action_dim).to(self.device)
+        self.critic1_target = Critic(state_dim, self.action_dim).to(self.device)
+        self.critic2_target = Critic(state_dim, self.action_dim).to(self.device)
         
         # Initialize targets
         self.critic1_target.load_state_dict(self.critic1.state_dict())
@@ -224,12 +239,22 @@ class SAC:
             eval_mode: If True, deterministic policy
             
         Returns:
-            action: Continuous action [a_1, ..., a_K] with Σa_k = C
+            action: Continuous action [a_1, ..., a_K] with sum ≤ C
+                   In efficient mode: K actions (last "null" action discarded)
+                   In standard mode: K actions (sum = C)
         """
         state_tensor = torch.FloatTensor(state).unsqueeze(0).to(self.device)
         
         with torch.no_grad():
-            action = self.actor(state_tensor)
+            actor_output = self.actor(state_tensor)  # Shape: (1, K) or (1, K+1)
+            
+            if self.use_efficient_allocation:
+                # Extract first K actions (discard last "null slice" action)
+                # Actor outputs K+1, we return K
+                action = actor_output[:, :self.num_slices]
+            else:
+                # Standard mode: return all K actions
+                action = actor_output
         
         return action.cpu().numpy()[0]
     
@@ -262,7 +287,14 @@ class SAC:
         # ============ Update Critics ============
         with torch.no_grad():
             # Sample actions from current policy for next states
-            next_actions = self.actor(next_states)
+            next_actor_output = self.actor(next_states)  # Shape: (batch, K) or (batch, K+1)
+            
+            if self.use_efficient_allocation:
+                # Extract first K actions (critics only see K actions)
+                next_actions = next_actor_output[:, :self.num_slices]
+            else:
+                # Standard mode
+                next_actions = next_actor_output
             
             # Compute target Q-values (minimum of two critics)
             q1_next = self.critic1_target(next_states, next_actions)
@@ -293,7 +325,14 @@ class SAC:
         
         # ============ Update Actor ============
         # Sample new actions from current policy
-        new_actions = self.actor(states)
+        new_actor_output = self.actor(states)  # Shape: (batch, K) or (batch, K+1)
+        
+        if self.use_efficient_allocation:
+            # Extract first K actions for critics
+            new_actions = new_actor_output[:, :self.num_slices]
+        else:
+            # Standard mode
+            new_actions = new_actor_output
         
         # Compute Q-values
         q1_new = self.critic1(states, new_actions)

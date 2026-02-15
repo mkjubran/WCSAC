@@ -177,19 +177,33 @@ class WCSAC:
         uncertainty_radius: float = 0.1,  # Size of uncertainty set
         pessimism_penalty: float = 0.1,  # Penalty for pessimistic Q-learning
         device: str = 'cpu',
-        seed: int = None
+        seed: int = None,
+        use_efficient_allocation: bool = False  # NEW: Enable K+1 allocation mode
     ):
         """
         Args:
             kappa: Robustness trade-off (0=nominal SAC, 1=worst-case)
             uncertainty_radius: Radius of uncertainty set for perturbations
             pessimism_penalty: Conservative penalty for Q-values
+            use_efficient_allocation: If True, actor outputs K+1 actions (K slices + 1 null)
         """
         self.device = torch.device(device)
         self.gamma = gamma
         self.tau = tau
-        self.action_dim = action_dim
         self.capacity = capacity
+        
+        # Efficient allocation mode
+        self.use_efficient_allocation = use_efficient_allocation
+        self.num_slices = action_dim  # K (actual number of slices)
+        
+        if use_efficient_allocation:
+            # Actor outputs K+1 (K slices + 1 "null slice" for unused capacity)
+            self.actor_action_dim = action_dim + 1
+            self.action_dim = action_dim  # Critics still see K actions
+        else:
+            # Standard mode: Actor outputs K (all capacity must be allocated)
+            self.actor_action_dim = action_dim
+            self.action_dim = action_dim
         
         # WCSAC parameters
         self.kappa = kappa
@@ -203,15 +217,16 @@ class WCSAC:
                 torch.cuda.manual_seed_all(seed)
         
         # Networks
-        self.actor = Actor(state_dim, action_dim, capacity).to(self.device)
+        # Actor outputs actor_action_dim (K or K+1), critics see action_dim (K)
+        self.actor = Actor(state_dim, self.actor_action_dim, capacity).to(self.device)
         
         # Robust critics (2 for double Q-learning)
-        self.critic1 = RobustCritic(state_dim, action_dim).to(self.device)
-        self.critic2 = RobustCritic(state_dim, action_dim).to(self.device)
+        self.critic1 = RobustCritic(state_dim, self.action_dim).to(self.device)
+        self.critic2 = RobustCritic(state_dim, self.action_dim).to(self.device)
         
         # Target critics
-        self.critic1_target = RobustCritic(state_dim, action_dim).to(self.device)
-        self.critic2_target = RobustCritic(state_dim, action_dim).to(self.device)
+        self.critic1_target = RobustCritic(state_dim, self.action_dim).to(self.device)
+        self.critic2_target = RobustCritic(state_dim, self.action_dim).to(self.device)
         
         # Initialize targets
         self.critic1_target.load_state_dict(self.critic1.state_dict())
@@ -241,11 +256,23 @@ class WCSAC:
         self.train_step = 0
     
     def select_action(self, state: np.ndarray, eval_mode: bool = False) -> np.ndarray:
-        """Select action given state"""
+        """
+        Select action given state.
+        
+        Returns:
+            action: K actions for slices (discards "null slice" if efficient mode)
+        """
         state_tensor = torch.FloatTensor(state).unsqueeze(0).to(self.device)
         
         with torch.no_grad():
-            action = self.actor(state_tensor)
+            actor_output = self.actor(state_tensor)  # Shape: (1, K) or (1, K+1)
+            
+            if self.use_efficient_allocation:
+                # Extract first K actions (discard last "null slice" action)
+                action = actor_output[:, :self.num_slices]
+            else:
+                # Standard mode: return all K actions
+                action = actor_output
         
         return action.cpu().numpy()[0]
     
@@ -317,7 +344,14 @@ class WCSAC:
         
         # ============ Update Critics (Worst-Case) ============
         # Sample actions for next states
-        next_actions = self.actor(next_states)
+        next_actor_output = self.actor(next_states)  # Shape: (batch, K) or (batch, K+1)
+        
+        if self.use_efficient_allocation:
+            # Extract first K actions (critics only see K actions)
+            next_actions = next_actor_output[:, :self.num_slices]
+        else:
+            # Standard mode
+            next_actions = next_actor_output
         
         # Compute worst-case target
         q_target = self._compute_worst_case_target(
@@ -350,7 +384,14 @@ class WCSAC:
         self.critic2_optimizer.step()
         
         # ============ Update Actor (Robust Policy) ============
-        new_actions = self.actor(states)
+        new_actor_output = self.actor(states)  # Shape: (batch, K) or (batch, K+1)
+        
+        if self.use_efficient_allocation:
+            # Extract first K actions for critics
+            new_actions = new_actor_output[:, :self.num_slices]
+        else:
+            # Standard mode
+            new_actions = new_actor_output
         
         # Get Q-values
         q1_new_nominal, q1_new_worst = self.critic1(states, new_actions)
