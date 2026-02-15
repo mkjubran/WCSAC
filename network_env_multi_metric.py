@@ -42,6 +42,15 @@ class NetworkEnvironment:
         profile_seed: int = None,  # Seed for dynamic profile selection
         use_efficient_allocation: bool = False,  # NEW: Enable efficient resource allocation
         unused_capacity_reward_weight: float = 0.0,  # NEW: Reward weight for unused capacity
+        use_transport_layer: bool = False,  # NEW: Enable transport layer modeling
+        transport_link_capacity: float = 50_000_000,  # NEW: Transport link capacity (bits/sec)
+        slice_packet_sizes: List[int] = None,  # NEW: Packet sizes per slice (bits)
+        slice_bit_rates: List[int] = None,  # NEW: Bit rates per slice (bits/sec per user)
+        slice_priorities: List[int] = None,  # NEW: Priority ordering per slice
+        max_transport_delay_per_slice: List[float] = None,  # NEW: Max delay caps (seconds)
+        transport_delay_weights: List[float] = None,  # NEW: Reward weights for delays
+        service_time_distribution: str = "deterministic",  # NEW: Service time distribution
+        mg1_stability_threshold: float = 0.999,  # NEW: Stability threshold
     ):
         """
         Args:
@@ -106,6 +115,22 @@ class NetworkEnvironment:
         # Efficient allocation mode
         self.use_efficient_allocation = use_efficient_allocation
         self.unused_reward_weight = unused_capacity_reward_weight
+        
+        # Transport layer configuration
+        self.use_transport_layer = use_transport_layer
+        
+        if self.use_transport_layer:
+            self.transport_link_capacity = transport_link_capacity
+            self.slice_packet_sizes = slice_packet_sizes if slice_packet_sizes else [12_000] * K
+            self.slice_bit_rates = slice_bit_rates if slice_bit_rates else [1_000_000] * K
+            self.slice_priorities = slice_priorities if slice_priorities else list(range(K))
+            self.max_transport_delay_per_slice = max_transport_delay_per_slice if max_transport_delay_per_slice else [1.0] * K
+            self.transport_delay_weights = transport_delay_weights if transport_delay_weights else [1.0] * K
+            self.service_time_distribution = service_time_distribution
+            self.mg1_stability_threshold = mg1_stability_threshold
+            
+            # Validate transport configuration
+            self._validate_transport_config()
         
         # Thresholds
         if thresholds is None:
@@ -353,7 +378,7 @@ class NetworkEnvironment:
         Clears all cumulative data for episodic learning.
         
         Returns:
-            s_0: Initial state (β, CDF_1, ..., CDF_K)
+            s_0: Initial state (β, CDF_1, ..., CDF_K, [ρ, W_vector])
         """
         # Clear cumulative data
         self.X = [[] for _ in range(self.K)]
@@ -375,7 +400,16 @@ class NetworkEnvironment:
         beta = 0.0
         cdfs = [np.ones(len(self.traffic_values)) / len(self.traffic_values)] * self.K
         
-        state = self._build_state(beta, cdfs)
+        # Initial transport metrics (if enabled)
+        if self.use_transport_layer:
+            # At reset, no traffic yet, so zero utilization and minimal delays
+            transport_utilization = 0.0
+            transport_delays = np.array([0.001] * self.K, dtype=np.float32)  # Small baseline delay
+        else:
+            transport_utilization = None
+            transport_delays = None
+        
+        state = self._build_state(beta, cdfs, transport_utilization, transport_delays)
         return state
     
     def step(self, action: np.ndarray) -> Tuple[np.ndarray, float, bool, dict]:
@@ -482,6 +516,51 @@ class NetworkEnvironment:
         cdfs = self._compute_cdfs(n_start, n_end)
         beta = self._compute_beta(n_start, n_end)
         
+        # Step 5.5: Compute transport layer metrics (if enabled)
+        if self.use_transport_layer:
+            # Compute success rates per slice (binary: 1.0 if all metrics satisfied, 0.0 otherwise)
+            success_rates = []
+            for k in range(self.K):
+                # Get recent samples for this slice
+                recent_qos_samples = self.Q[k][-self.N:]
+                
+                if len(recent_qos_samples) == 0:
+                    success_rates.append(0.0)
+                    continue
+                
+                # Check last TTI (most recent)
+                last_qos = recent_qos_samples[-1]
+                all_metrics_satisfied = True
+                
+                for metric_idx, metric_name in enumerate(self.qos_metrics_multi[k]):
+                    qos_val = last_qos.get(metric_name, 0)
+                    threshold = self.thresholds_multi[k][metric_idx]
+                    direction = self.qos_metric_directions[k][metric_idx]
+                    
+                    if direction == 'lower':
+                        metric_satisfied = (qos_val <= threshold)
+                    else:
+                        metric_satisfied = (qos_val >= threshold)
+                    
+                    if not metric_satisfied:
+                        all_metrics_satisfied = False
+                        break
+                
+                # Binary success rate
+                success_rates.append(1.0 if all_metrics_satisfied else 0.0)
+            
+            # Get current traffic per slice
+            current_traffic = [int(self.X[k][-1]) if len(self.X[k]) > 0 else 0 for k in range(self.K)]
+            
+            # Compute transport metrics
+            transport_utilization, transport_delays = self._compute_transport_metrics(
+                current_traffic, success_rates
+            )
+        else:
+            transport_utilization = None
+            transport_delays = None
+            success_rates = [0.0] * self.K
+        
         # Step 6: Compute reward
         used_capacity = np.sum(action)
         unused_capacity = self.C - used_capacity
@@ -494,8 +573,17 @@ class NetworkEnvironment:
             efficiency_bonus = self.unused_reward_weight * (unused_capacity / self.C)
             reward += efficiency_bonus
         
+        # Transport layer penalty (if enabled)
+        if self.use_transport_layer:
+            # Weighted delay penalty
+            transport_penalty = sum(
+                self.transport_delay_weights[k] * transport_delays[k]
+                for k in range(self.K)
+            )
+            reward -= transport_penalty
+        
         # Step 7: Build state and check if done
-        state = self._build_state(beta, cdfs)
+        state = self._build_state(beta, cdfs, transport_utilization, transport_delays)
         
         self.current_dti += 1
         done = (self.current_dti >= self.max_dtis)
@@ -519,12 +607,22 @@ class NetworkEnvironment:
             'dti': self.current_dti,
             'r_used': r_used,
             'constraint_violated': False,
-            'traffic': traffic_per_slice,  # Average traffic per slice in this DTI
-            'active_profiles': active_profiles,  # Current profile for each slice
-            'used_capacity': used_capacity,  # NEW: Track actual capacity used
-            'unused_capacity': unused_capacity,  # NEW: Track unused capacity
-            'capacity_utilization': used_capacity / self.C,  # NEW: Utilization percentage
+            'traffic': traffic_per_slice,
+            'active_profiles': active_profiles,
+            'used_capacity': used_capacity,
+            'unused_capacity': unused_capacity,
+            'capacity_utilization': used_capacity / self.C,
         }
+        
+        # Add transport metrics to info if enabled
+        if self.use_transport_layer:
+            info.update({
+                'transport_utilization': transport_utilization,
+                'transport_delays': transport_delays.tolist(),  # Convert numpy to list for JSON
+                'transport_stable': transport_utilization < self.mg1_stability_threshold,
+                'success_rate_per_slice': success_rates,
+                'transport_penalty': transport_penalty if self.use_transport_layer else 0.0,
+            })
         
         return state, reward, done, info
     
@@ -577,6 +675,116 @@ class NetworkEnvironment:
         
         return cdfs
     
+    def _compute_transport_metrics(self, traffic: List[int], success_rates: List[float]) -> Tuple[float, np.ndarray]:
+        """
+        Compute M/G/1 priority queueing transport layer metrics.
+        
+        Args:
+            traffic: Array of traffic per slice [traffic_0, ..., traffic_{K-1}]
+            success_rates: Array of RAN success rates [sr_0, ..., sr_{K-1}] (binary: 0 or 1)
+        
+        Returns:
+            rho_total: Total transport utilization (scalar)
+            delays: Transport delays as numpy array of shape (K,)
+        """
+        K = len(traffic)
+        
+        # === Step 1: Compute loads and arrival rates ===
+        loads = []
+        arrival_rates = []
+        service_rates = []
+        utilizations = []
+        
+        for k in range(K):
+            # Successful traffic (users that passed RAN QoS check)
+            successful_traffic_k = traffic[k] * success_rates[k]
+            
+            # Load (bits/sec)
+            load_k = successful_traffic_k * self.slice_bit_rates[k]
+            loads.append(load_k)
+            
+            # Arrival rate (packets/sec)
+            lambda_k = load_k / self.slice_packet_sizes[k]
+            arrival_rates.append(lambda_k)
+            
+            # Service rate (packets/sec)
+            mu_k = self.transport_link_capacity / self.slice_packet_sizes[k]
+            service_rates.append(mu_k)
+            
+            # Utilization
+            rho_k = lambda_k / mu_k if mu_k > 0 else 0.0
+            utilizations.append(rho_k)
+        
+        # Total utilization
+        rho_total = sum(utilizations)
+        
+        # === Step 2: Check stability ===
+        if rho_total >= self.mg1_stability_threshold:
+            # System unstable - cap all delays
+            delays = np.array(self.max_transport_delay_per_slice, dtype=np.float32)
+            return rho_total, delays
+        
+        # === Step 3: Compute E[R] (residual service time) ===
+        E_R = 0.0
+        for k in range(K):
+            E_S_k = 1.0 / service_rates[k] if service_rates[k] > 0 else 0.0
+            
+            if self.service_time_distribution == "deterministic":
+                E_S_k_squared = E_S_k ** 2
+            elif self.service_time_distribution == "exponential":
+                E_S_k_squared = 2.0 * (E_S_k ** 2)
+            else:
+                E_S_k_squared = E_S_k ** 2  # Default to deterministic
+            
+            E_R += arrival_rates[k] * E_S_k_squared
+        
+        E_R = E_R / 2.0
+        
+        # === Step 4: Sort slices by priority ===
+        # Create list of (priority, slice_index) pairs
+        priority_order = sorted(
+            [(self.slice_priorities[k], k) for k in range(K)],
+            key=lambda x: x[0]  # Sort by priority value (lower = higher priority)
+        )
+        
+        # Extract sorted slice indices
+        sorted_indices = [idx for _, idx in priority_order]
+        
+        # === Step 5: Compute cumulative utilizations in priority order ===
+        cumulative_rho = [0.0] * (K + 1)
+        for i, k in enumerate(sorted_indices):
+            cumulative_rho[i + 1] = cumulative_rho[i] + utilizations[k]
+        
+        # === Step 6: Compute delays in priority order ===
+        delays_list = [0.0] * K
+        
+        for i, k in enumerate(sorted_indices):
+            # Denominator for this priority level
+            denominator = (1.0 - cumulative_rho[i]) * (1.0 - cumulative_rho[i + 1])
+            
+            if denominator > 0.001:  # Numerical stability threshold
+                # Queue delay
+                W_q_k = E_R / denominator
+                
+                # Service time
+                E_S_k = 1.0 / service_rates[k] if service_rates[k] > 0 else 0.0
+                
+                # Total delay
+                W_k = W_q_k + E_S_k
+                
+                # Cap at maximum
+                W_k = min(W_k, self.max_transport_delay_per_slice[k])
+            else:
+                # Near-unstable for this class
+                W_k = self.max_transport_delay_per_slice[k]
+            
+            delays_list[k] = W_k
+        
+        # Convert to numpy array
+        delays = np.array(delays_list, dtype=np.float32)
+        
+        return rho_total, delays
+    
     def _compute_beta(self, n_start: int, n_end: int) -> float:
         """
         Algorithm 1, Step 5: Compute global beta over window.
@@ -606,15 +814,34 @@ class NetworkEnvironment:
         beta = violated_traffic / total_traffic
         return beta
     
-    def _build_state(self, beta: float, cdfs: List[np.ndarray]) -> np.ndarray:
+    def _build_state(self, beta: float, cdfs: List[np.ndarray], 
+                     transport_utilization: float = None, 
+                     transport_delays: np.ndarray = None) -> np.ndarray:
         """
-        Build state vector: s = (β, CDF_1, ..., CDF_K)
+        Build state vector: s = (β, CDF_1, ..., CDF_K, [ρ_total, W_0, ..., W_{K-1}])
         
-        Note: β ∈ [0,1], no scaling by 100
+        Transport metrics are optional (only if transport layer enabled).
+        
+        Args:
+            beta: RAN QoS violation ratio
+            cdfs: List of K CDF arrays, each of length |T|
+            transport_utilization: Total transport utilization (optional)
+            transport_delays: Numpy array of K delays (optional)
+        
+        Returns:
+            state: Numpy array
         """
         state = [beta]
+        
+        # Add all CDFs
         for cdf in cdfs:
             state.extend(cdf)
+        
+        # Add transport metrics if enabled
+        if self.use_transport_layer and transport_utilization is not None:
+            state.append(transport_utilization)
+            state.extend(transport_delays)  # Add delay vector
+        
         return np.array(state, dtype=np.float32)
     
     def _nearest_qos(self, k: int, traffic: int, rbs: int) -> Tuple[float, float]:
@@ -647,13 +874,49 @@ class NetworkEnvironment:
     
     @property
     def state_dim(self) -> int:
-        """State dimension: 1 (beta) + K * |T| (CDFs)"""
-        return 1 + self.K * len(self.traffic_values)
+        """State dimension: 1 (beta) + K * |T| (CDFs) + transport metrics"""
+        base_dim = 1 + self.K * len(self.traffic_values)
+        if self.use_transport_layer:
+            # Add: 1 (rho_total) + K (delays vector)
+            return base_dim + 1 + self.K
+        return base_dim
     
     @property
     def action_dim(self) -> int:
         """Action dimension: K (one per slice)"""
         return self.K
+    
+    def _validate_transport_config(self):
+        """Validate transport layer configuration arrays"""
+        arrays_to_check = {
+            'slice_packet_sizes': self.slice_packet_sizes,
+            'slice_bit_rates': self.slice_bit_rates,
+            'slice_priorities': self.slice_priorities,
+            'max_transport_delay_per_slice': self.max_transport_delay_per_slice,
+            'transport_delay_weights': self.transport_delay_weights,
+        }
+        
+        for name, array in arrays_to_check.items():
+            if len(array) != self.K:
+                raise ValueError(
+                    f"Transport config error: {name} has length {len(array)} "
+                    f"but K={self.K}. All transport parameters must have K entries."
+                )
+        
+        # Check positive values
+        if any(p <= 0 for p in self.slice_packet_sizes):
+            raise ValueError("slice_packet_sizes must be positive")
+        
+        if any(b <= 0 for b in self.slice_bit_rates):
+            raise ValueError("slice_bit_rates must be positive")
+        
+        if any(d <= 0 for d in self.max_transport_delay_per_slice):
+            raise ValueError("max_transport_delay_per_slice must be positive")
+        
+        if any(w < 0 for w in self.transport_delay_weights):
+            raise ValueError("transport_delay_weights must be non-negative")
+        
+        print(f"✓ Transport layer configuration validated for K={self.K} slices")
 
 
 if __name__ == "__main__":

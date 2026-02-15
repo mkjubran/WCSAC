@@ -91,7 +91,6 @@ THRESHOLDS_MULTI = [
 ]
 
 
-
 # NEW: Specify which metrics are "lower is better" vs "higher is better"
 # Format: [[directions for slice 0], [directions for slice 1], ...]
 # 'lower' = metric should be below threshold (delay, loss, jitter)
@@ -142,92 +141,13 @@ LAMBDA = 0.5    # λ: Weight for resource efficiency bonus
 W = 5           # Window size for β and CDF computation
 
 # ============================================================================
-# TRANSPORT LAYER PARAMETERS
-# ============================================================================
-
-# Enable transport layer modeling with M/G/1 priority queueing
-USE_TRANSPORT_LAYER = True
-
-# Queueing model type
-TRANSPORT_QUEUEING_MODEL = "MG1_PRIORITY"  # M/G/1 with non-preemptive priority
-
-# Link capacity (bits/sec)
-TRANSPORT_LINK_CAPACITY = 50_000_000  # 50 Mbps
-
-# ============================================================================
-# PER-SLICE TRANSPORT PARAMETERS
-# All arrays must have length K (number of slices)
-# ============================================================================
-
-# Per-slice packet sizes (bits)
-# Determines service rate per slice
-# Average packet size for each slice type
-SLICE_PACKET_SIZES = [
-    1_600,    # Slice 0: 200 bytes (small packets, e.g., voice-like)
-    8_000,    # Slice 1: 1000 bytes (medium packets, e.g., streaming)
-    12_000,   # Slice 2: 1500 bytes (large packets, e.g., data)
-]
-
-# Per-slice bit rates (bits/sec per user)
-# How much bandwidth each active user in this slice consumes
-SLICE_BIT_RATES = [
-    64_000,      # Slice 0: 64 kbps per user
-    2_000_000,   # Slice 1: 2 Mbps per user
-    512_000,     # Slice 2: 512 kbps per user
-]
-
-# Priority ordering (0 = highest priority, higher number = lower priority)
-# Lower values are served first in the M/G/1 priority queue
-SLICE_PRIORITIES = [
-    0,    # Slice 0: Highest priority
-    1,    # Slice 1: Medium priority
-    2,    # Slice 2: Lowest priority
-]
-
-# Maximum transport delay caps per slice (seconds)
-# Applied when system becomes unstable or delay exceeds cap
-MAX_TRANSPORT_DELAY_PER_SLICE = [
-    0.100,   # Slice 0: 100ms cap (latency-sensitive)
-    1.000,   # Slice 1: 1 sec cap (moderate tolerance)
-    5.000,   # Slice 2: 5 sec cap (delay-tolerant)
-]
-
-# Reward weights for transport delay penalties (per slice)
-# Higher weight = more important to minimize this slice's delay
-# Typically correlates with priority but can be customized
-TRANSPORT_DELAY_WEIGHTS = [
-    1.0,    # Slice 0: Highest weight (most critical)
-    0.5,    # Slice 1: Medium weight
-    0.2,    # Slice 2: Lowest weight (least critical)
-]
-
-# ============================================================================
-# M/G/1 MODEL PARAMETERS (GLOBAL)
-# ============================================================================
-
-# Service time distribution assumption
-# Options: "deterministic", "exponential"
-SERVICE_TIME_DISTRIBUTION = "deterministic"
-
-# M/G/1 stability threshold
-# If ρ_total ≥ this value, system considered unstable
-MG1_STABILITY_THRESHOLD = 0.999
-
-# Optional: Delay thresholds for debugging/analysis (not used in reward)
-TRANSPORT_DELAY_THRESHOLDS = [
-    0.010,   # Slice 0: 10ms threshold
-    0.050,   # Slice 1: 50ms threshold
-    0.200,   # Slice 2: 200ms threshold
-]
-
-# ============================================================================
 # EFFICIENT RESOURCE ALLOCATION MODE
 # ============================================================================
 
 # Enable efficient resource allocation (K+1 actions with "null slice")
 # When True: Agent can choose to NOT allocate all capacity (save resources)
 # When False: Agent must allocate all capacity (standard SAC, sum = C)
-USE_EFFICIENT_ALLOCATION = True
+USE_EFFICIENT_ALLOCATION = False #True
 
 # Reward weight for unused capacity (only used if USE_EFFICIENT_ALLOCATION=True)
 # Positive value: Rewards saving resources (encourages efficiency)
@@ -336,19 +256,6 @@ def get_config():
         'use_efficient_allocation': USE_EFFICIENT_ALLOCATION,
         'unused_capacity_reward_weight': UNUSED_CAPACITY_REWARD_WEIGHT,
         
-        # Transport layer
-        'use_transport_layer': USE_TRANSPORT_LAYER,
-        'transport_queueing_model': TRANSPORT_QUEUEING_MODEL,
-        'transport_link_capacity': TRANSPORT_LINK_CAPACITY,
-        'slice_packet_sizes': SLICE_PACKET_SIZES,
-        'slice_bit_rates': SLICE_BIT_RATES,
-        'slice_priorities': SLICE_PRIORITIES,
-        'max_transport_delay_per_slice': MAX_TRANSPORT_DELAY_PER_SLICE,
-        'transport_delay_weights': TRANSPORT_DELAY_WEIGHTS,
-        'service_time_distribution': SERVICE_TIME_DISTRIBUTION,
-        'mg1_stability_threshold': MG1_STABILITY_THRESHOLD,
-        'transport_delay_thresholds': TRANSPORT_DELAY_THRESHOLDS,
-        
         # SAC
         'lr_actor': LR_ACTOR,
         'lr_critic': LR_CRITIC,
@@ -425,24 +332,6 @@ def print_config():
         print(f"  Actor output dim:     {K}")
         print(f"  Constraint:           sum(actions) = C (softmax guaranteed)")
         print(f"  Behavior:             All capacity always allocated")
-    
-    print("\n[TRANSPORT LAYER]")
-    if USE_TRANSPORT_LAYER:
-        print(f"  Enabled:              YES")
-        print(f"  Model:                {TRANSPORT_QUEUEING_MODEL}")
-        print(f"  Link capacity:        {TRANSPORT_LINK_CAPACITY / 1e6:.1f} Mbps")
-        print(f"  Service distribution: {SERVICE_TIME_DISTRIBUTION}")
-        print(f"  Stability threshold:  {MG1_STABILITY_THRESHOLD}")
-        print(f"\n  Per-Slice Configuration:")
-        for k in range(K):
-            print(f"    Slice {k}:")
-            print(f"      Packet size:    {SLICE_PACKET_SIZES[k]} bits ({SLICE_PACKET_SIZES[k]//8} bytes)")
-            print(f"      Bit rate:       {SLICE_BIT_RATES[k]/1000:.1f} kbps per user")
-            print(f"      Priority:       {SLICE_PRIORITIES[k]} (0=highest)")
-            print(f"      Max delay cap:  {MAX_TRANSPORT_DELAY_PER_SLICE[k]*1000:.1f} ms")
-            print(f"      Delay weight:   {TRANSPORT_DELAY_WEIGHTS[k]}")
-    else:
-        print(f"  Enabled:              NO (RAN-only optimization)")
     
     print("\n[SAC - Algorithm 2]")
     print(f"  E_max (episodes):     {NUM_EPISODES}")

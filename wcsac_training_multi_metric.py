@@ -120,15 +120,24 @@ def train_wcsac():
         traffic_profiles=cfg['traffic_profiles'],
         qos_table_files=cfg['qos_table_files'],
         qos_metrics=cfg.get('qos_metrics'),
-        qos_metrics_multi=cfg.get('qos_metrics_multi'),  # Multi-metric support
+        qos_metrics_multi=cfg.get('qos_metrics_multi'),
         thresholds_multi=cfg.get('thresholds_multi'),
         qos_metric_directions=cfg.get('qos_metric_directions'),
         dynamic_profile_config=cfg['dynamic_profile_config'],
         max_dtis=cfg['max_dtis'],
         traffic_seed=config.TRAFFIC_SEED if hasattr(config, 'TRAFFIC_SEED') else None,
         profile_seed=config.PROFILE_SEED if hasattr(config, 'PROFILE_SEED') else None,
-        use_efficient_allocation=cfg.get('use_efficient_allocation', False),  # NEW: Efficient allocation
-        unused_capacity_reward_weight=cfg.get('unused_capacity_reward_weight', 0.0),  # NEW
+        use_efficient_allocation=cfg.get('use_efficient_allocation', False),
+        unused_capacity_reward_weight=cfg.get('unused_capacity_reward_weight', 0.0),
+        use_transport_layer=cfg.get('use_transport_layer', False),
+        transport_link_capacity=cfg.get('transport_link_capacity', 50_000_000),
+        slice_packet_sizes=cfg.get('slice_packet_sizes'),
+        slice_bit_rates=cfg.get('slice_bit_rates'),
+        slice_priorities=cfg.get('slice_priorities'),
+        max_transport_delay_per_slice=cfg.get('max_transport_delay_per_slice'),
+        transport_delay_weights=cfg.get('transport_delay_weights'),
+        service_time_distribution=cfg.get('service_time_distribution', 'deterministic'),
+        mg1_stability_threshold=cfg.get('mg1_stability_threshold', 0.999),
     )
     
     # Print QoS mode
@@ -200,6 +209,13 @@ def train_wcsac():
         num_violations = 0
         episode_wc_reward = 0
         
+        # Transport layer tracking (if enabled)
+        if cfg.get('use_transport_layer', False):
+            episode_transport_util_sum = 0.0
+            episode_transport_delay_sum = [0.0] * cfg['K']
+            episode_transport_penalty_sum = 0.0
+            transport_steps = 0
+        
         # Episode loop
         for dti in range(cfg['max_dtis']):
             
@@ -227,6 +243,21 @@ def train_wcsac():
             writer.add_scalar('dti/worst_case_reward', wc_reward, global_step)
             writer.add_scalar('dti/beta', info['beta'], global_step)
             
+            # Log transport layer metrics (if enabled)
+            if cfg.get('use_transport_layer', False) and 'transport_utilization' in info:
+                writer.add_scalar('dti/transport_utilization', info['transport_utilization'], global_step)
+                writer.add_scalar('dti/transport_stable', int(info['transport_stable']), global_step)
+                writer.add_scalar('dti/transport_penalty', info.get('transport_penalty', 0.0), global_step)
+                
+                # Per-slice transport delays (in milliseconds)
+                for k in range(cfg['K']):
+                    delay_ms = info['transport_delays'][k] * 1000
+                    writer.add_scalar(f'dti/transport_delay_slice{k}_ms', delay_ms, global_step)
+                
+                # Per-slice success rates
+                for k in range(cfg['K']):
+                    writer.add_scalar(f'dti/success_rate_slice{k}', info['success_rate_per_slice'][k], global_step)
+            
             # Log actions per slice
             for k in range(cfg['K']):
                 writer.add_scalar(f'dti/action_slice{k}', action[k], global_step)
@@ -241,6 +272,14 @@ def train_wcsac():
             episode_beta_sum += info['beta']
             if info['constraint_violated']:
                 num_violations += 1
+            
+            # Accumulate transport metrics (if enabled)
+            if cfg.get('use_transport_layer', False) and 'transport_utilization' in info:
+                episode_transport_util_sum += info['transport_utilization']
+                for k in range(cfg['K']):
+                    episode_transport_delay_sum[k] += info['transport_delays'][k]
+                episode_transport_penalty_sum += info.get('transport_penalty', 0.0)
+                transport_steps += 1
             
             # Train agent
             if len(agent.replay_buffer) >= cfg['min_buffer_size']:
@@ -273,6 +312,19 @@ def train_wcsac():
             writer.add_scalar('episode/avg_beta', avg_beta, episode)
             writer.add_scalar('episode/violations', num_violations, episode)
             writer.add_scalar('episode/buffer_size', len(agent.replay_buffer), episode)
+            
+            # Transport layer episode averages (if enabled)
+            if cfg.get('use_transport_layer', False) and transport_steps > 0:
+                avg_transport_util = episode_transport_util_sum / transport_steps
+                avg_transport_penalty = episode_transport_penalty_sum / transport_steps
+                
+                writer.add_scalar('episode/avg_transport_utilization', avg_transport_util, episode)
+                writer.add_scalar('episode/avg_transport_penalty', avg_transport_penalty, episode)
+                
+                # Average delay per slice
+                for k in range(cfg['K']):
+                    avg_delay_ms = (episode_transport_delay_sum[k] / transport_steps) * 1000
+                    writer.add_scalar(f'episode/avg_transport_delay_slice{k}_ms', avg_delay_ms, episode)
             
             # Moving averages
             if len(episode_rewards) >= 100:
