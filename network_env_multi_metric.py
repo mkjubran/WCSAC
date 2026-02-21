@@ -10,7 +10,7 @@ import pandas as pd
 import json
 from typing import List, Tuple, Dict
 from traffic_generation import TrafficGenerator
-
+import pdb
 
 class NetworkEnvironment:
     """
@@ -566,13 +566,15 @@ class NetworkEnvironment:
         unused_capacity = self.C - used_capacity
         
         # Base reward: -beta + lambda * (unused / C)
-        reward = -beta + self.lambda_reward * (unused_capacity / self.C)
+        reward = -beta #+ self.lambda_reward * (unused_capacity / self.C)
         
         # In efficient allocation mode, add bonus for saving resources
-        if self.use_efficient_allocation and self.unused_reward_weight > 0:
+        if self.use_efficient_allocation: #and self.unused_reward_weight > 0:
+            #pdb.set_trace()
             efficiency_bonus = self.unused_reward_weight * (unused_capacity / self.C)
             reward += efficiency_bonus
-        
+            #print(f"beta={beta}, reward={reward}, unused_capacity={unused_capacity}, efficiency_bonus={efficiency_bonus}")
+
         # Transport layer penalty (if enabled)
         if self.use_transport_layer:
             # Weighted delay penalty
@@ -581,7 +583,7 @@ class NetworkEnvironment:
                 for k in range(self.K)
             )
             reward -= transport_penalty
-        
+       
         # Step 7: Build state and check if done
         state = self._build_state(beta, cdfs, transport_utilization, transport_delays)
         

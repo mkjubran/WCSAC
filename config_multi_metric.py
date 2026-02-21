@@ -74,7 +74,7 @@ QOS_METRICS_MULTI = [
     ['cbrFrameDelay'],
     
     # Slice 2 (Video): Must satisfy BOTH segment loss AND delay
-    ['rtVideoStreamingSegmentLoss']
+    ['rtVideoStreamingEnd2endDelaySegment']
 ]
 
 # NEW: List of lists - thresholds corresponding to each metric
@@ -87,7 +87,7 @@ THRESHOLDS_MULTI = [
     [1600],  # delay <= 1600ms AND throughput >= 500 kbps
     
     # Slice 2: [loss threshold, delay threshold]
-    [25]        # loss <= 15% AND delay <= 500ms
+    [30]        # loss <= 15% AND delay <= 500ms
 ]
 
 
@@ -136,7 +136,7 @@ else:
 # REWARD PARAMETER
 # ============================================================================
 
-LAMBDA = 0.5    # λ: Weight for resource efficiency bonus
+LAMBDA = 0.5    #depreciated (not used, replaced with another parameter) λ: Weight for resource efficiency bonus
 
 # Sliding Window
 W = 5           # Window size for β and CDF computation
@@ -146,7 +146,7 @@ W = 5           # Window size for β and CDF computation
 # ============================================================================
 
 # Enable transport layer modeling with M/G/1 priority queueing
-USE_TRANSPORT_LAYER = True
+USE_TRANSPORT_LAYER = False
 
 # Queueing model type
 TRANSPORT_QUEUEING_MODEL = "MG1_PRIORITY"  # M/G/1 with non-preemptive priority
