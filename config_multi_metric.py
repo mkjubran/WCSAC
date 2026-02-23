@@ -57,14 +57,16 @@ DETERMINISTIC = False
 QOS_TABLE_FILES = [
     'qos_voip_all_metrics.json',
     'qos_cbr_all_metrics.json',
-    'qos_video_all_metrics.json'
+    'qos_cbr_all_metrics.json'
+#    'qos_video_all_metrics.json'
 ]
 
 # NEW: List of lists - each inner list contains metrics for that slice
 # Available metrics (check your JSON files):
 #   VoIP: voIPFrameLoss, voIPFrameDelay, voIPJitter, voIPReceivedThroughput, etc.
 #   CBR: cbrFrameDelay, cbrReceivedThroughput
-#   Video: rtVideoStreamingEnd2endDelaySegment, rtVideoStreamingSegmentLoss
+#   Video: rtVideoStreamingEnd2endDelaySegment, rtVideoStreamingSegmentLoss, 'rtVideoStreamingInterArrivalTimeSegment',
+#               'rtVideoStreamingPlayoutBufferLength'
 
 QOS_METRICS_MULTI = [
     # Slice 0 (VoIP): Must satisfy BOTH delay AND loss
@@ -74,7 +76,8 @@ QOS_METRICS_MULTI = [
     ['cbrFrameDelay'],
     
     # Slice 2 (Video): Must satisfy BOTH segment loss AND delay
-    ['rtVideoStreamingEnd2endDelaySegment']
+    ['cbrFrameDelay']
+#    ['rtVideoStreamingEnd2endDelaySegment', 'rtVideoStreamingInterArrivalTimeSegment', 'rtVideoStreamingPlayoutBufferLength']
 ]
 
 # NEW: List of lists - thresholds corresponding to each metric
@@ -87,7 +90,8 @@ THRESHOLDS_MULTI = [
     [1600],  # delay <= 1600ms AND throughput >= 500 kbps
     
     # Slice 2: [loss threshold, delay threshold]
-    [30]        # loss <= 15% AND delay <= 500ms
+    [1600]
+#    [30, 0.65, 1.1]        # loss <= 15% AND delay <= 500ms
 ]
 
 
@@ -104,7 +108,8 @@ QOS_METRIC_DIRECTIONS = [
     ['lower'],    # delay: lower is better, throughput: higher is better
     
     # Slice 2
-    ['lower']      # loss: lower is better, delay: lower is better
+    ['lower']
+#    ['lower', 'lower', 'higher']      # loss: lower is better, delay: lower is better
 ]
 
 # Beta threshold (overall QoS violation ratio target)
@@ -233,7 +238,7 @@ USE_EFFICIENT_ALLOCATION = True
 # Positive value: Rewards saving resources (encourages efficiency)
 # Zero: Neutral (no reward/penalty for unused capacity)
 # Negative: Penalizes unused capacity (encourages full allocation)
-UNUSED_CAPACITY_REWARD_WEIGHT = 0.1
+UNUSED_CAPACITY_REWARD_WEIGHT = -0.01
 
 # How efficient allocation works:
 # - Actor output dimension: K+1 (K slices + 1 "null slice")

@@ -447,7 +447,8 @@ class NetworkEnvironment:
         r_used = np.round(action).astype(int)
         
         for k in range(self.K):
-            rbs = int(np.clip(r_used[k], 1, self.C))
+            #rbs = int(np.clip(r_used[k], 1, self.C))
+            rbs = int(np.clip(r_used[k], 1, 8)) #Jubran
             q_k_samples = []  # List of dicts, one per TTI
             
             # Get last N traffic values for this DTI
