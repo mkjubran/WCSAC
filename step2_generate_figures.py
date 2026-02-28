@@ -782,8 +782,9 @@ def fig5_dynamic_scenarios(exps_by_cat, output_dir):
                 steps = all_steps[mask] - ep_start_dti  # Relative to episode start
                 values = all_values[mask]
                 
-                ax.plot(steps, values, label=f'Slice {slice_num}', 
-                       alpha=0.7, linewidth=2, marker='o', markersize=2)
+                # Use step plot for categorical data (profiles are discrete states)
+                ax.step(steps, values, where='post', label=f'Slice {slice_num}', 
+                       alpha=0.7, linewidth=2)
             
             ax.set_xlabel('DTI (within Episode 80)')
             ax.set_ylabel('Active Traffic Profile')
@@ -877,6 +878,119 @@ def fig5_dynamic_scenarios(exps_by_cat, output_dir):
                         dpi=FIGURE_DPI, bbox_inches='tight')
             plt.close()
             print(f"  ✓ fig5d_dynamic_allocation_periods.{FIGURE_FORMAT} ({num_periods} periods)")
+    
+    # ========================================================================
+    # Figure 5e: Active profiles for EPISODE 160
+    # ========================================================================
+    if 'ep160_action_slice0' in data:
+        fig, ax = plt.subplots(figsize=(10, 6))
+        
+        if 'dti_active_profile_slice0' in data and 'dti_active_profile_slice1' in data:
+            # Episode 160
+            ep_start_dti = 160 * 2000
+            ep_end_dti = 161 * 2000
+            
+            profile_names = {
+                0: 'Uniform',
+                1: 'Extremely Low',
+                2: 'Low',
+                3: 'Medium',
+                4: 'High',
+                5: 'Extremely High',
+                6: 'External'
+            }
+            
+            for key in ['dti_active_profile_slice0', 'dti_active_profile_slice1']:
+                slice_num = key.split('slice')[-1]
+                all_steps = np.array(data[key]['steps'])
+                all_values = np.array(data[key]['values'])
+                
+                # Filter for episode 160
+                mask = (all_steps >= ep_start_dti) & (all_steps < ep_end_dti)
+                steps = all_steps[mask] - ep_start_dti  # Relative to episode start
+                values = all_values[mask]
+                
+                # Use step plot for categorical data
+                ax.step(steps, values, where='post', label=f'Slice {slice_num}', 
+                       alpha=0.7, linewidth=2)
+            
+            ax.set_xlabel('DTI (within Episode 160)')
+            ax.set_ylabel('Active Traffic Profile')
+            ax.set_title('Traffic Profile Changes (Episode 160)')
+            ax.set_yticks(list(profile_names.keys()))
+            ax.set_yticklabels(list(profile_names.values()))
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+            
+            plt.tight_layout()
+            plt.savefig(os.path.join(output_dir, f'fig5e_dynamic_profiles_ep160.{FIGURE_FORMAT}'), 
+                        dpi=FIGURE_DPI, bbox_inches='tight')
+            plt.close()
+            print(f"  ✓ fig5e_dynamic_profiles_ep160.{FIGURE_FORMAT}")
+    
+    # ========================================================================
+    # Figure 5f: Box plots for MULTIPLE PERIODS (episode 160)
+    # ========================================================================
+    if 'ep160_action_slice0' in data and 'ep160_action_slice1' in data:
+        fig, ax = plt.subplots(figsize=(14, 6))
+        
+        slice0_data = data['ep160_action_slice0']['values']
+        slice1_data = data['ep160_action_slice1']['values']
+        
+        period_size = 200
+        num_periods = len(slice0_data) // period_size
+        
+        box_data = []
+        labels = []
+        positions = []
+        colors = []
+        
+        for period in range(num_periods):
+            start_idx = period * period_size
+            end_idx = (period + 1) * period_size
+            
+            # Slice 0
+            box_data.append(slice0_data[start_idx:end_idx])
+            labels.append(f'{start_idx}-{end_idx}\nS0')
+            positions.append(period * 2.5)
+            colors.append('lightblue')
+            
+            # Slice 1
+            box_data.append(slice1_data[start_idx:end_idx])
+            labels.append(f'{start_idx}-{end_idx}\nS1')
+            positions.append(period * 2.5 + 1)
+            colors.append('lightcoral')
+        
+        bp = ax.boxplot(box_data, positions=positions, labels=labels,
+                       patch_artist=True, widths=0.8)
+        
+        for patch, color in zip(bp['boxes'], colors):
+            patch.set_facecolor(color)
+            patch.set_alpha(0.7)
+        
+        for median in bp['medians']:
+            median.set_color('red')
+            median.set_linewidth(2)
+        
+        ax.set_xlabel('DTI Range within Episode 160')
+        ax.set_ylabel(LABEL_RBS)
+        ax.set_title('Allocation Distribution by Period (Episode 160, Dynamic)')
+        ax.grid(True, alpha=0.3, axis='y')
+        plt.xticks(rotation=45, ha='right', fontsize=8)
+        
+        # Add legend
+        from matplotlib.patches import Patch
+        legend_elements = [
+            Patch(facecolor='lightblue', alpha=0.7, label='Slice 0'),
+            Patch(facecolor='lightcoral', alpha=0.7, label='Slice 1')
+        ]
+        ax.legend(handles=legend_elements, loc='upper right')
+        
+        plt.tight_layout()
+        plt.savefig(os.path.join(output_dir, f'fig5f_dynamic_allocation_periods_ep160.{FIGURE_FORMAT}'), 
+                    dpi=FIGURE_DPI, bbox_inches='tight')
+        plt.close()
+        print(f"  ✓ fig5f_dynamic_allocation_periods_ep160.{FIGURE_FORMAT} ({num_periods} periods)")
 
 
 def fig_actor_loss_comparison(experiments, output_dir):
