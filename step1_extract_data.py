@@ -69,7 +69,6 @@ def extract_essential_metrics(tb_data):
     required_metrics = {
         'episode/reward': 'episode_reward',
         'episode/avg_beta': 'episode_beta',
-        'episode/actor_loss': 'episode_actor_loss',  # NEW: For training analysis
         'dti/beta': 'dti_beta',
         'dti/action_slice0': 'dti_action_slice0',
         'dti/action_slice1': 'dti_action_slice1',
@@ -85,6 +84,11 @@ def extract_essential_metrics(tb_data):
         'episode_160/active_profile_slice1': 'ep160_active_profile_slice1',
     }
     
+    # Optional metrics (try multiple possible tags)
+    optional_metrics = {
+        'episode_actor_loss': ['train/actor_loss', 'episode/actor_loss', 'Losses/actor_loss', 'Training/actor_loss', 'actor_loss']
+    }
+    
     for tb_key, output_key in required_metrics.items():
         if tb_key in tb_data:
             # Convert to lists (JSON serializable)
@@ -96,6 +100,21 @@ def extract_essential_metrics(tb_data):
                 'values': values,
                 'count': len(values)
             }
+    
+    # Try optional metrics (with multiple possible tag names)
+    for output_key, possible_tags in optional_metrics.items():
+        for tb_key in possible_tags:
+            if tb_key in tb_data:
+                steps = [int(v[0]) for v in tb_data[tb_key]]
+                values = [float(v[1]) for v in tb_data[tb_key]]
+                
+                essential[output_key] = {
+                    'steps': steps,
+                    'values': values,
+                    'count': len(values)
+                }
+                print(f"    ✓ Found {output_key} as '{tb_key}'")
+                break  # Found it, stop trying other tags
     
     return essential
 

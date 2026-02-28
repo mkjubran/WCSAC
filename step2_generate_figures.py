@@ -574,9 +574,14 @@ def fig4_allocation_patterns(experiments, output_dir):
     print("\n[Figure 4] Allocation Patterns (Multiple Scenarios)...")
     
     # Target scenarios to plot (flexible matching)
+    # Your profiles: 'extremely_low', 'low', 'medium', 'high', 'extremely_high'
+    # After .title(): 'Extremely_Low', 'Low', 'Medium', 'High', 'Extremely_High'
+    # After joining: 'Extremely_Low - Extremely_High'
+    # After normalization: 'extremelylowextremelyhigh'
+    
     target_scenarios = [
         ('Low-High', ['low', 'high']),
-        ('Extremely_Low-Extremely_High', ['extremely_low', 'extremely_high', 'extremelylow', 'extremelyhigh']),
+        ('Extremely_Low-Extremely_High', ['extremely', 'low', 'high']),
         ('Medium-High', ['medium', 'high'])
     ]
     
@@ -592,7 +597,24 @@ def fig4_allocation_patterns(experiments, output_dir):
         # Try to match each target
         for target_name, keywords in target_scenarios:
             # Check if all keywords are in the scenario string
-            if all(kw.replace('_', '').replace('-', '') in scenario_str for kw in keywords):
+            keywords_normalized = [kw.replace('_', '').replace('-', '').replace(' ', '') for kw in keywords]
+            
+            if all(kw in scenario_str for kw in keywords_normalized):
+                # Extra validation to avoid false matches
+                if target_name == 'Extremely_Low-Extremely_High':
+                    # Must have "extremely" twice (extremelylow AND extremelyhigh)
+                    # Count occurrences of "extremely"
+                    if scenario_str.count('extremely') < 2:
+                        continue
+                elif target_name == 'Low-High':
+                    # Should NOT have "extremely" or "medium"
+                    if 'extremely' in scenario_str or 'medium' in scenario_str:
+                        continue
+                elif target_name == 'Medium-High':
+                    # Should have "medium" but not "extremely"
+                    if 'extremely' in scenario_str:
+                        continue
+                
                 if target_name not in found_scenarios:
                     found_scenarios[target_name] = exp
                     print(f"  ✓ Matched '{target_name}': {exp['scenario_str']}")
