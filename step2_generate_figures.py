@@ -783,8 +783,13 @@ def fig5_dynamic_scenarios(exps_by_cat, output_dir):
                 values = all_values[mask]
                 
                 # Use step plot for categorical data (profiles are discrete states)
-                ax.step(steps, values, where='post', label=f'Slice {slice_num}', 
-                       alpha=0.7, linewidth=2)
+                # Slice 0: solid line, Slice 1: dashed line for visibility when overlapping
+                if slice_num == '0':
+                    ax.step(steps, values, where='post', label=f'Slice {slice_num}', 
+                           alpha=0.8, linewidth=2.5, linestyle='-', color='steelblue')
+                else:
+                    ax.step(steps, values, where='post', label=f'Slice {slice_num}', 
+                           alpha=0.8, linewidth=2.5, linestyle='--', color='coral', dashes=(5, 3))
             
             ax.set_xlabel('DTI (within Episode 80)')
             ax.set_ylabel('Active Traffic Profile')
@@ -911,8 +916,13 @@ def fig5_dynamic_scenarios(exps_by_cat, output_dir):
                 values = all_values[mask]
                 
                 # Use step plot for categorical data
-                ax.step(steps, values, where='post', label=f'Slice {slice_num}', 
-                       alpha=0.7, linewidth=2)
+                # Slice 0: solid line, Slice 1: dashed line for visibility when overlapping
+                if slice_num == '0':
+                    ax.step(steps, values, where='post', label=f'Slice {slice_num}', 
+                           alpha=0.8, linewidth=2.5, linestyle='-', color='steelblue')
+                else:
+                    ax.step(steps, values, where='post', label=f'Slice {slice_num}', 
+                           alpha=0.8, linewidth=2.5, linestyle='--', color='coral', dashes=(5, 3))
             
             ax.set_xlabel('DTI (within Episode 160)')
             ax.set_ylabel('Active Traffic Profile')
