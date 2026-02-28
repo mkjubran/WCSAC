@@ -566,52 +566,112 @@ def fig3_heterogeneous(exps_by_cat, baseline_data, output_dir):
 # ============================================================================
 
 def fig4_allocation_patterns(experiments, output_dir):
-    """Box plots for static scenario (episode 80)."""
-    print("\n[Figure 4] Static Allocation Patterns...")
+    """
+    Box plots for allocation distribution across multiple heterogeneous scenarios.
+    Shows Low-High, Extremely_Low-Extremely_High, and Medium-High in one figure.
+    All box plots in a single axis for easy comparison.
+    """
+    print("\n[Figure 4] Allocation Patterns (Multiple Scenarios)...")
     
-    # Use heterogeneous if available, else any static
-    exp = None
-    for e in experiments:
-        if e['category'] == 'static_heterogeneous':
-            exp = e
-            break
+    # Target scenarios to plot (flexible matching)
+    target_scenarios = [
+        ('Low-High', ['low', 'high']),
+        ('Extremely_Low-Extremely_High', ['extremely_low', 'extremely_high', 'extremelylow', 'extremelyhigh']),
+        ('Medium-High', ['medium', 'high'])
+    ]
     
-    if not exp:
-        for e in experiments:
-            if e['category'] == 'static_homogeneous':
-                exp = e
+    found_scenarios = {}
+    
+    # Find matching experiments
+    for exp in experiments:
+        if exp['category'] != 'static_heterogeneous':
+            continue
+        
+        scenario_str = exp['scenario_str'].lower().replace('_', '').replace('-', '').replace(' ', '')
+        
+        # Try to match each target
+        for target_name, keywords in target_scenarios:
+            # Check if all keywords are in the scenario string
+            if all(kw.replace('_', '').replace('-', '') in scenario_str for kw in keywords):
+                if target_name not in found_scenarios:
+                    found_scenarios[target_name] = exp
+                    print(f"  ✓ Matched '{target_name}': {exp['scenario_str']}")
                 break
     
-    if not exp:
-        print("  ⚠️  No static experiments")
+    if not found_scenarios:
+        print("  ⚠️  No matching heterogeneous scenarios found")
+        print("      Available heterogeneous scenarios:")
+        for exp in experiments:
+            if exp['category'] == 'static_heterogeneous':
+                print(f"        - {exp['scenario_str']}")
         return
     
-    allocations = {}
-    for key in ['ep80_action_slice0', 'ep80_action_slice1']:
-        if key in exp['data']:
-            slice_num = key.split('slice')[-1]
-            allocations[f'Slice {slice_num}'] = exp['data'][key]['values']
+    # Collect all data in one structure
+    all_data = []
+    all_labels = []
+    all_colors = []
     
-    if not allocations:
-        print("  ⚠️  No episode 80 allocation data")
+    # Color scheme for scenarios
+    scenario_colors = {
+        'Low-High': ['steelblue', 'lightsteelblue'],
+        'Extremely_Low-Extremely_High': ['coral', 'lightcoral'],
+        'Medium-High': ['seagreen', 'lightgreen']
+    }
+    
+    for scenario_name, exp in found_scenarios.items():
+        # Get allocation data for both slices
+        slice0_data = None
+        slice1_data = None
+        
+        if 'ep80_action_slice0' in exp['data']:
+            slice0_data = exp['data']['ep80_action_slice0']['values']
+        if 'ep80_action_slice1' in exp['data']:
+            slice1_data = exp['data']['ep80_action_slice1']['values']
+        
+        # Add slice 0
+        if slice0_data is not None:
+            all_data.append(slice0_data)
+            all_labels.append(f'{scenario_name}\nSlice 0')
+            all_colors.append(scenario_colors.get(scenario_name, ['gray', 'lightgray'])[0])
+        
+        # Add slice 1
+        if slice1_data is not None:
+            all_data.append(slice1_data)
+            all_labels.append(f'{scenario_name}\nSlice 1')
+            all_colors.append(scenario_colors.get(scenario_name, ['gray', 'lightgray'])[1])
+    
+    if not all_data:
+        print("  ⚠️  No allocation data found")
         return
     
-    fig, ax = plt.subplots(figsize=(8, 6))
+    # Create single figure with all box plots
+    fig, ax = plt.subplots(figsize=(14, 6))
     
-    ax.boxplot(allocations.values(), labels=allocations.keys(),
-               patch_artist=True,
-               boxprops=dict(facecolor='lightblue', alpha=0.7),
-               medianprops=dict(color='red', linewidth=2))
+    # Create box plot
+    bp = ax.boxplot(all_data, labels=all_labels,
+                    patch_artist=True,
+                    boxprops=dict(alpha=0.7),
+                    medianprops=dict(color='red', linewidth=2),
+                    widths=0.6)
     
-    ax.set_ylabel(LABEL_RBS)
-    ax.set_title(f'Allocation Distribution - {exp["scenario_str"]} (Episode 80)')
+    # Color each box
+    for patch, color in zip(bp['boxes'], all_colors):
+        patch.set_facecolor(color)
+    
+    ax.set_ylabel(LABEL_RBS, fontsize=12)
+    ax.set_xlabel('Scenario and Slice', fontsize=12)
+    ax.set_title('Allocation Distribution Across Heterogeneous Scenarios (Episode 80)', 
+                 fontsize=14, fontweight='bold')
     ax.grid(True, alpha=0.3, axis='y')
+    
+    # Rotate labels if needed
+    plt.xticks(rotation=45, ha='right')
     
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, f'fig4_allocation_patterns.{FIGURE_FORMAT}'), 
                 dpi=FIGURE_DPI, bbox_inches='tight')
     plt.close()
-    print(f"  ✓ fig4_allocation_patterns.{FIGURE_FORMAT}")
+    print(f"  ✓ fig4_allocation_patterns.{FIGURE_FORMAT} ({len(found_scenarios)} scenarios, {len(all_data)} box plots)")
 
 
 # ============================================================================
@@ -819,9 +879,214 @@ def fig5_dynamic_scenarios(exps_by_cat, output_dir):
             print(f"  ✓ fig5d_dynamic_allocation_periods.{FIGURE_FORMAT} ({num_periods} periods)")
 
 
-# ============================================================================
-# TABLE
-# ============================================================================
+def fig_actor_loss_comparison(experiments, output_dir):
+    """
+    Training actor loss comparison for heterogeneous and dynamic scenarios.
+    Shows 3 curves: one heterogeneous scenario and dynamic scenario.
+    """
+    print("\n[Figure] Actor Loss Comparison...")
+    
+    # Find one heterogeneous and one dynamic experiment
+    heterogeneous_exp = None
+    dynamic_exp = None
+    
+    for exp in experiments:
+        if exp['category'] == 'static_heterogeneous' and heterogeneous_exp is None:
+            heterogeneous_exp = exp
+        elif exp['category'] == 'dynamic' and dynamic_exp is None:
+            dynamic_exp = exp
+        
+        if heterogeneous_exp and dynamic_exp:
+            break
+    
+    # Check if we have data
+    experiments_to_plot = []
+    if heterogeneous_exp and 'episode_actor_loss' in heterogeneous_exp.get('data', {}):
+        experiments_to_plot.append(('Heterogeneous', heterogeneous_exp, 'coral'))
+    if dynamic_exp and 'episode_actor_loss' in dynamic_exp.get('data', {}):
+        experiments_to_plot.append(('Dynamic', dynamic_exp, 'steelblue'))
+    
+    if not experiments_to_plot:
+        print("  ⚠️  No actor loss data available")
+        print("      Note: episode_actor_loss needs to be added to step1 extraction")
+        return
+    
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    for label, exp, color in experiments_to_plot:
+        steps = np.array(exp['data']['episode_actor_loss']['steps'])
+        values = np.array(exp['data']['episode_actor_loss']['values'])
+        
+        # Plot raw data with transparency
+        ax.plot(steps, values, alpha=0.3, color=color, linewidth=0.5)
+        
+        # Moving average for smoothing
+        if len(values) >= 50:
+            window = min(50, len(values) // 2)
+            ma = np.convolve(values, np.ones(window)/window, mode='valid')
+            ma_steps = steps[window-1:]
+            ax.plot(ma_steps, ma, color=color, linewidth=2, 
+                   label=f'{label} ({exp["scenario_str"]})')
+        else:
+            ax.plot(steps, values, color=color, linewidth=2,
+                   label=f'{label} ({exp["scenario_str"]})')
+    
+    ax.set_xlabel(LABEL_EPISODE)
+    ax.set_ylabel('Actor Loss')
+    ax.set_title('Training Actor Loss Comparison')
+    ax.legend(loc='best', framealpha=0.9)
+    ax.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, f'fig_actor_loss_comparison.{FIGURE_FORMAT}'), 
+                dpi=FIGURE_DPI, bbox_inches='tight')
+    plt.close()
+    print(f"  ✓ fig_actor_loss_comparison.{FIGURE_FORMAT}")
+
+def generate_latex_table_static_homogeneous(exps_by_cat, baseline_data, output_dir):
+    """Generate LaTeX table for static homogeneous results (Figure 2 data)."""
+    print("\n[Table] Static Homogeneous Results...")
+    
+    exps = exps_by_cat['static_homogeneous']
+    if not exps:
+        print("  ⚠️  No homogeneous experiments")
+        return
+    
+    # Sort by load
+    load_order = {'extremely_low': 0, 'low': 1, 'medium': 2, 'high': 3, 'extremely_high': 4}
+    exps = sorted(exps, key=lambda e: load_order.get(list(e['scenario'].values())[0], 999))
+    
+    # Build table data
+    rows = []
+    for exp in exps:
+        profile = list(exp['scenario'].values())[0].replace('_', ' ').title()
+        
+        # SAC data
+        sac_stats = exp['statistics'].get('beta')
+        if sac_stats:
+            sac_beta = sac_stats.get('last_100_mean', sac_stats.get('mean'))
+            sac_std = sac_stats.get('last_100_std', sac_stats.get('std'))
+            sac_str = f"{sac_beta:.4f} $\\pm$ {sac_std:.4f}" if sac_beta and sac_std else "N/A"
+        else:
+            sac_str = "N/A"
+        
+        # Baseline data
+        run_name = exp['run_name']
+        baseline_strs = {}
+        for baseline_name in ['equal', 'proportional', 'greedy', 'random']:
+            if run_name in baseline_data and baseline_name in baseline_data[run_name]:
+                b_stats = baseline_data[run_name][baseline_name]['beta']
+                b_beta = b_stats.get('last_100_mean', b_stats.get('mean'))
+                b_std = b_stats.get('last_100_std', b_stats.get('std'))
+                baseline_strs[baseline_name] = f"{b_beta:.4f} $\\pm$ {b_std:.4f}" if b_beta and b_std else "N/A"
+            else:
+                baseline_strs[baseline_name] = "N/A"
+        
+        rows.append({
+            'profile': profile,
+            'sac': sac_str,
+            'equal': baseline_strs.get('equal', 'N/A'),
+            'proportional': baseline_strs.get('proportional', 'N/A'),
+            'greedy': baseline_strs.get('greedy', 'N/A'),
+            'random': baseline_strs.get('random', 'N/A')
+        })
+    
+    # Generate LaTeX
+    latex = r"""\begin{table}[!t]
+\centering
+\caption{QoS Performance Across Static Homogeneous Traffic Profiles (Last 100 Episodes)}
+\label{tab:static_homogeneous_comparison}
+\begin{tabular}{lccccc}
+\toprule
+\textbf{Profile} & \textbf{SAC} & \textbf{Equal} & \textbf{Proportional} & \textbf{Greedy} & \textbf{Random} \\
+\midrule
+"""
+    
+    for row in rows:
+        latex += f"{row['profile']} & {row['sac']} & {row['equal']} & {row['proportional']} & {row['greedy']} & {row['random']} \\\\\n"
+    
+    latex += r"""\bottomrule
+\end{tabular}
+\end{table}
+"""
+    
+    # Save
+    output_path = os.path.join(output_dir, 'table_static_homogeneous.tex')
+    with open(output_path, 'w') as f:
+        f.write(latex)
+    
+    print(f"  ✓ table_static_homogeneous.tex")
+
+
+def generate_latex_table_heterogeneous(exps_by_cat, baseline_data, output_dir):
+    """Generate LaTeX table for heterogeneous results (Figure 3 data)."""
+    print("\n[Table] Heterogeneous Results...")
+    
+    exps = exps_by_cat['static_heterogeneous']
+    if not exps:
+        print("  ⚠️  No heterogeneous experiments")
+        return
+    
+    rows = []
+    for exp in exps:
+        scenario = exp['scenario_str']
+        
+        # SAC data
+        sac_stats = exp['statistics'].get('beta')
+        if sac_stats:
+            sac_beta = sac_stats.get('last_100_mean', sac_stats.get('mean'))
+            sac_std = sac_stats.get('last_100_std', sac_stats.get('std'))
+            sac_str = f"{sac_beta:.4f} $\\pm$ {sac_std:.4f}" if sac_beta and sac_std else "N/A"
+        else:
+            sac_str = "N/A"
+        
+        # Baseline data
+        run_name = exp['run_name']
+        baseline_strs = {}
+        for baseline_name in ['equal', 'proportional', 'greedy', 'random']:
+            if run_name in baseline_data and baseline_name in baseline_data[run_name]:
+                b_stats = baseline_data[run_name][baseline_name]['beta']
+                b_beta = b_stats.get('last_100_mean', b_stats.get('mean'))
+                b_std = b_stats.get('last_100_std', b_stats.get('std'))
+                baseline_strs[baseline_name] = f"{b_beta:.4f} $\\pm$ {b_std:.4f}" if b_beta and b_std else "N/A"
+            else:
+                baseline_strs[baseline_name] = "N/A"
+        
+        rows.append({
+            'scenario': scenario,
+            'sac': sac_str,
+            'equal': baseline_strs.get('equal', 'N/A'),
+            'proportional': baseline_strs.get('proportional', 'N/A'),
+            'greedy': baseline_strs.get('greedy', 'N/A'),
+            'random': baseline_strs.get('random', 'N/A')
+        })
+    
+    # Generate LaTeX
+    latex = r"""\begin{table}[!t]
+\centering
+\caption{QoS Performance Under Heterogeneous Traffic Scenarios (Last 100 Episodes)}
+\label{tab:heterogeneous_comparison}
+\begin{tabular}{lccccc}
+\toprule
+\textbf{Scenario} & \textbf{SAC} & \textbf{Equal} & \textbf{Proportional} & \textbf{Greedy} & \textbf{Random} \\
+\midrule
+"""
+    
+    for row in rows:
+        latex += f"{row['scenario']} & {row['sac']} & {row['equal']} & {row['proportional']} & {row['greedy']} & {row['random']} \\\\\n"
+    
+    latex += r"""\bottomrule
+\end{tabular}
+\end{table}
+"""
+    
+    # Save
+    output_path = os.path.join(output_dir, 'table_heterogeneous.tex')
+    with open(output_path, 'w') as f:
+        f.write(latex)
+    
+    print(f"  ✓ table_heterogeneous.tex")
+
 
 def generate_summary_table(experiments, output_dir):
     """Generate LaTeX summary table."""
@@ -930,6 +1195,20 @@ def main():
     fig3_heterogeneous(exps_by_cat, baseline_data, args.output_dir)
     fig4_allocation_patterns(experiments, args.output_dir)
     fig5_dynamic_scenarios(exps_by_cat, args.output_dir)
+    fig_actor_loss_comparison(experiments, args.output_dir)
+    
+    # Generate tables
+    print("\n" + "="*80)
+    print("GENERATING TABLES")
+    print("="*80)
+    
+    if baseline_data:
+        generate_latex_table_static_homogeneous(exps_by_cat, baseline_data, args.output_dir)
+        generate_latex_table_heterogeneous(exps_by_cat, baseline_data, args.output_dir)
+    else:
+        print("  ⚠️  No baseline data - tables will only include SAC results")
+    
+    generate_summary_table(experiments, args.output_dir)
     
     # Generate table
     print("\n" + "="*80)

@@ -69,6 +69,7 @@ def extract_essential_metrics(tb_data):
     required_metrics = {
         'episode/reward': 'episode_reward',
         'episode/avg_beta': 'episode_beta',
+        'episode/actor_loss': 'episode_actor_loss',  # NEW: For training analysis
         'dti/beta': 'dti_beta',
         'dti/action_slice0': 'dti_action_slice0',
         'dti/action_slice1': 'dti_action_slice1',
