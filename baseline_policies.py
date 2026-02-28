@@ -1,6 +1,5 @@
 """
 Baseline Resource Allocation Policies for Comparison
-
 Implements four baseline methods:
 1. Equal Allocation
 2. Proportional Allocation
@@ -27,7 +26,6 @@ Usage:
     # Also supported: Pass parameters directly (backwards compatible)
     equal = create_baseline('equal', K=2, C=8)
 """
-
 import numpy as np
 from typing import List, Tuple
 
@@ -133,7 +131,7 @@ class GreedyQoS(BaselinePolicy):
     - Requires per-slice QoS tracking
     """
     
-    def __init__(self, K: int, C: int, N: int, thresholds: List[float], qos_tables: List[dict]):
+    def __init__(self, K: int, C: int, N: int, thresholds: List[float], qos_tables: List[dict], qos_metrics: List[str] = None):
         """
         Args:
             K: Number of slices
@@ -141,11 +139,44 @@ class GreedyQoS(BaselinePolicy):
             N: TTIs per DTI
             thresholds: QoS thresholds for each slice
             qos_tables: QoS lookup tables for estimating violations
+            qos_metrics: Which metric to use per slice (for multi-metric tables)
         """
         super().__init__(K, C)
         self.N = N
         self.thresholds = thresholds
-        self.qos_tables = qos_tables
+        
+        # Convert multi-metric QoS tables to single-metric format
+        # Use the SPECIFIC metric from config (qos_metrics), not just first one
+        self.qos_tables = []
+        for k in range(K):
+            if isinstance(qos_tables[k], dict):
+                # Check if multi-metric format
+                first_key = next(iter(qos_tables[k].keys()))
+                
+                if isinstance(first_key, str):
+                    # Multi-metric format: {metric_name: {(traffic, rbs): (mu, sigma)}}
+                    # Use the metric specified in config
+                    if qos_metrics and k < len(qos_metrics) and qos_metrics[k]:
+                        metric_to_use = qos_metrics[k]
+                    else:
+                        # Fallback to first metric if not specified
+                        metric_to_use = list(qos_tables[k].keys())[0]
+                        print(f"Warning: No qos_metric specified for slice {k}, using '{metric_to_use}'")
+                    
+                    if metric_to_use in qos_tables[k]:
+                        self.qos_tables.append(qos_tables[k][metric_to_use])
+                    else:
+                        print(f"Warning: Metric '{metric_to_use}' not found for slice {k}")
+                        print(f"         Available metrics: {list(qos_tables[k].keys())}")
+                        # Use first available metric as fallback
+                        first_metric = list(qos_tables[k].keys())[0]
+                        self.qos_tables.append(qos_tables[k][first_metric])
+                else:
+                    # Single-metric format: {(traffic, rbs): (mu, sigma)}
+                    self.qos_tables.append(qos_tables[k])
+            else:
+                # Direct table
+                self.qos_tables.append(qos_tables[k])
     
     def select_action(self, state: np.ndarray, info: dict = None) -> np.ndarray:
         """Greedily allocate to slice with highest violation ratio"""
@@ -188,7 +219,7 @@ class GreedyQoS(BaselinePolicy):
         traffic = max(5, min(80, traffic))
         rbs = max(1, min(self.C, rbs))
         
-        # Lookup QoS table
+        # Lookup QoS table (already converted to single-metric in __init__)
         key = (traffic, rbs)
         if key in self.qos_tables[slice_id]:
             mu, sigma = self.qos_tables[slice_id][key]
@@ -218,6 +249,7 @@ class GreedyQoS(BaselinePolicy):
         min_dist = float('inf')
         best_mu, best_sigma = 0.5, 0.02
         
+        # QoS tables already converted to single-metric format in __init__
         for (t, r), (mu, sigma) in self.qos_tables[k].items():
             dist = abs(t - traffic) + abs(r - rbs)
             if dist < min_dist:
@@ -290,6 +322,9 @@ def create_baseline(baseline_type: str, K: int = None, C: int = None, cfg: dict 
             kwargs['N'] = cfg['N']
         if 'thresholds' not in kwargs and 'thresholds' in cfg:
             kwargs['thresholds'] = cfg['thresholds']
+        # IMPORTANT: Extract qos_metrics for multi-metric support
+        if 'qos_metrics' not in kwargs and 'qos_metrics' in cfg:
+            kwargs['qos_metrics'] = cfg['qos_metrics']
     
     # Validate required parameters
     if K is None or C is None:
@@ -307,7 +342,10 @@ def create_baseline(baseline_type: str, K: int = None, C: int = None, cfg: dict 
         # Requires additional parameters
         if 'N' not in kwargs or 'thresholds' not in kwargs or 'qos_tables' not in kwargs:
             raise ValueError("GreedyQoS requires N, thresholds, and qos_tables")
-        return GreedyQoS(K, C, kwargs['N'], kwargs['thresholds'], kwargs['qos_tables'])
+        
+        # Pass qos_metrics if available (for multi-metric support)
+        qos_metrics = kwargs.get('qos_metrics', None)
+        return GreedyQoS(K, C, kwargs['N'], kwargs['thresholds'], kwargs['qos_tables'], qos_metrics)
     
     elif baseline_type == 'random':
         seed = kwargs.get('seed', None)

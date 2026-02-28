@@ -64,6 +64,55 @@ def load_extracted_data(json_path):
     return data
 
 
+def load_baseline_results(baseline_dir, experiments):
+    """
+    Load baseline results from JSON files.
+    
+    Matches baseline files to SAC experiments by run_name.
+    
+    Returns:
+        dict: {run_name: {baseline_name: {statistics}}}
+    """
+    if not os.path.exists(baseline_dir):
+        print(f"Warning: Baseline directory not found: {baseline_dir}")
+        return {}
+    
+    print(f"\nLoading baseline results from {baseline_dir}...")
+    
+    baseline_data = {}
+    
+    # Get all baseline JSON files
+    baseline_files = [f for f in os.listdir(baseline_dir) if f.startswith('baselines_') and f.endswith('.json')]
+    
+    if not baseline_files:
+        print(f"  No baseline files found in {baseline_dir}")
+        return {}
+    
+    for filename in baseline_files:
+        filepath = os.path.join(baseline_dir, filename)
+        
+        try:
+            with open(filepath, 'r') as f:
+                data = json.load(f)
+            
+            run_name = data['metadata']['run_name']
+            
+            # Store baseline results for this run
+            baseline_data[run_name] = {}
+            
+            for baseline_name, baseline_results in data['baselines'].items():
+                baseline_data[run_name][baseline_name] = baseline_results['statistics']
+            
+            print(f"  ✓ Loaded {filename}: {list(data['baselines'].keys())}")
+        
+        except Exception as e:
+            print(f"  ⚠️  Failed to load {filename}: {e}")
+    
+    print(f"  ✓ Loaded baselines for {len(baseline_data)} experiments")
+    
+    return baseline_data
+
+
 def categorize_experiments(experiments):
     """Organize experiments by category."""
     categories = {
@@ -98,11 +147,11 @@ def categorize_experiments(experiments):
 
 def fig1_training_convergence(experiments, output_dir):
     """
-    Generate training convergence figures:
-    - fig1a: Reward (multiple static scenarios)
-    - fig1b: Beta (multiple static scenarios)
-    - fig1c: Dynamic reward (single axis)
-    - fig1d: Dynamic beta (single axis)
+    Generate training convergence figures using pre-computed statistics:
+    - fig1a: Reward (multiple static scenarios) - uses last_100_mean from stats
+    - fig1b: Beta (multiple static scenarios) - uses last_100_mean from stats
+    - fig1c: Dynamic reward (single axis) - raw + MA
+    - fig1d: Dynamic beta (single axis) - raw + MA
     """
     print("\n[Figure 1] Training Convergence...")
     
@@ -121,96 +170,95 @@ def fig1_training_convergence(experiments, output_dir):
     }
     
     # ========================================================================
-    # Figure 1a: Reward - Multiple Scenarios
+    # Figure 1a: Reward - BAR CHART using last_100_mean from statistics
     # ========================================================================
     fig, ax = plt.subplots(figsize=(10, 6))
-    plotted = []
     
-    for exp in homogeneous_exps:
+    profiles = []
+    rewards = []
+    stds = []
+    
+    # Sort by load order
+    load_order = {'extremely_low': 0, 'low': 1, 'medium': 2, 'high': 3, 'extremely_high': 4}
+    sorted_exps = sorted(homogeneous_exps, key=lambda e: load_order.get(list(e['scenario'].values())[0], 999))
+    
+    for exp in sorted_exps:
         profile = list(exp['scenario'].values())[0]
+        reward_stats = exp['statistics'].get('reward')
         
-        if 'episode_reward' not in exp['data']:
-            print(f"  ⚠️  Skipping {profile}: no episode_reward data")
-            continue
-        
-        steps = np.array(exp['data']['episode_reward']['steps'])
-        values = np.array(exp['data']['episode_reward']['values'])
-        
-        if len(values) < 100:
-            print(f"  ⚠️  Skipping {profile}: only {len(values)} episodes")
-            continue
-        
-        # 100-episode moving average
-        ma = np.convolve(values, np.ones(100)/100, mode='valid')
-        color = profile_colors.get(profile, 'gray')
-        label = profile.replace('_', ' ').title()
-        
-        ax.plot(steps[99:], ma, color=color, linewidth=2, label=label, alpha=0.8)
-        plotted.append(profile)
+        if reward_stats:
+            reward_val = reward_stats.get('last_100_mean', reward_stats.get('mean'))
+            std_val = reward_stats.get('last_100_std', reward_stats.get('std'))
+            
+            if reward_val is not None and std_val is not None:
+                profiles.append(profile.replace('_', ' ').title())
+                rewards.append(reward_val)
+                stds.append(std_val)
     
-    ax.set_xlabel(LABEL_EPISODE)
-    ax.set_ylabel(LABEL_REWARD)
-    ax.set_title('Training Convergence: Episode Reward')
-    
-    if plotted:
-        ax.legend(loc='best', framealpha=0.9)
+    if profiles:
+        x_pos = np.arange(len(profiles))
+        ax.bar(x_pos, rewards, yerr=stds, capsize=5,
+               color=COLOR_REWARD, alpha=0.8, edgecolor='black', linewidth=1.2)
+        
+        ax.set_xlabel('Traffic Profile')
+        ax.set_ylabel(LABEL_REWARD)
+        ax.set_title('Training Performance: Episode Reward (Last 100 Episodes)')
+        ax.set_xticks(x_pos)
+        ax.set_xticklabels(profiles, rotation=45, ha='right')
+        ax.grid(True, alpha=0.3, axis='y')
     else:
         print(f"  ⚠️  No scenarios plotted for fig1a")
     
-    ax.grid(True, alpha=0.3)
-    
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, f'fig1a_reward_multi.{FIGURE_FORMAT}'), 
+    plt.savefig(os.path.join(output_dir, f'fig1a_reward_static.{FIGURE_FORMAT}'), 
                 dpi=FIGURE_DPI, bbox_inches='tight')
     plt.close()
-    print(f"  ✓ fig1a_reward_multi.{FIGURE_FORMAT} ({len(plotted)} scenarios)")
+    print(f"  ✓ fig1a_reward_static.{FIGURE_FORMAT} ({len(profiles)} scenarios)")
     
     # ========================================================================
-    # Figure 1b: Beta - Multiple Scenarios
+    # Figure 1b: Beta - BAR CHART using last_100_mean from statistics
     # ========================================================================
     fig, ax = plt.subplots(figsize=(10, 6))
-    plotted = []
     
-    for exp in homogeneous_exps:
+    profiles = []
+    betas = []
+    stds = []
+    
+    for exp in sorted_exps:
         profile = list(exp['scenario'].values())[0]
+        beta_stats = exp['statistics'].get('beta')
         
-        if 'episode_beta' not in exp['data']:
-            print(f"  ⚠️  Skipping {profile}: no episode_beta data")
-            continue
-        
-        steps = np.array(exp['data']['episode_beta']['steps'])
-        values = np.array(exp['data']['episode_beta']['values'])
-        
-        if len(values) < 100:
-            print(f"  ⚠️  Skipping {profile}: only {len(values)} episodes")
-            continue
-        
-        ma = np.convolve(values, np.ones(100)/100, mode='valid')
-        color = profile_colors.get(profile, 'gray')
-        label = profile.replace('_', ' ').title()
-        
-        ax.plot(steps[99:], ma, color=color, linewidth=2, label=label, alpha=0.8)
-        plotted.append(profile)
+        if beta_stats:
+            beta_val = beta_stats.get('last_100_mean', beta_stats.get('mean'))
+            std_val = beta_stats.get('last_100_std', beta_stats.get('std'))
+            
+            if beta_val is not None and std_val is not None:
+                profiles.append(profile.replace('_', ' ').title())
+                betas.append(beta_val)
+                stds.append(std_val)
     
-    ax.set_xlabel(LABEL_EPISODE)
-    ax.set_ylabel(LABEL_BETA)
-    ax.set_title('Training Convergence: QoS Performance')
-    
-    if plotted:
-        ax.legend(loc='best', framealpha=0.9)
+    if profiles:
+        x_pos = np.arange(len(profiles))
+        ax.bar(x_pos, betas, yerr=stds, capsize=5,
+               color=COLOR_BETA, alpha=0.8, edgecolor='black', linewidth=1.2)
+        
+        ax.set_xlabel('Traffic Profile')
+        ax.set_ylabel(LABEL_BETA)
+        ax.set_title('Training Performance: QoS Violation (Last 100 Episodes)')
+        ax.set_xticks(x_pos)
+        ax.set_xticklabels(profiles, rotation=45, ha='right')
+        ax.grid(True, alpha=0.3, axis='y')
     else:
         print(f"  ⚠️  No scenarios plotted for fig1b")
     
-    ax.grid(True, alpha=0.3)
-    
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, f'fig1b_beta_multi.{FIGURE_FORMAT}'), 
+    plt.savefig(os.path.join(output_dir, f'fig1b_beta_static.{FIGURE_FORMAT}'), 
                 dpi=FIGURE_DPI, bbox_inches='tight')
     plt.close()
-    print(f"  ✓ fig1b_beta_multi.{FIGURE_FORMAT} ({len(plotted)} scenarios)")
+    print(f"  ✓ fig1b_beta_static.{FIGURE_FORMAT} ({len(profiles)} scenarios)")
     
     # ========================================================================
-    # Figure 1c: Dynamic Reward (SINGLE AXIS)
+    # Figure 1c: Dynamic Reward (SINGLE AXIS) - raw data over training
     # ========================================================================
     if dynamic_exps and 'episode_reward' in dynamic_exps[0]['data']:
         exp = dynamic_exps[0]
@@ -220,16 +268,11 @@ def fig1_training_convergence(experiments, output_dir):
         steps = np.array(exp['data']['episode_reward']['steps'])
         values = np.array(exp['data']['episode_reward']['values'])
         
-        ax.plot(steps, values, alpha=0.3, color=COLOR_REWARD, linewidth=0.5, label='Raw')
-        
-        if len(values) >= 100:
-            ma = np.convolve(values, np.ones(100)/100, mode='valid')
-            ax.plot(steps[99:], ma, color=COLOR_REWARD, linewidth=2, label='100-ep MA')
+        ax.plot(steps, values, alpha=0.6, color=COLOR_REWARD, linewidth=1)
         
         ax.set_xlabel(LABEL_EPISODE)
         ax.set_ylabel(LABEL_REWARD)
         ax.set_title('Training Convergence (Dynamic): Episode Reward')
-        ax.legend()
         ax.grid(True, alpha=0.3)
         
         plt.tight_layout()
@@ -239,7 +282,7 @@ def fig1_training_convergence(experiments, output_dir):
         print(f"  ✓ fig1c_dynamic_reward.{FIGURE_FORMAT}")
     
     # ========================================================================
-    # Figure 1d: Dynamic Beta (SINGLE AXIS)
+    # Figure 1d: Dynamic Beta (SINGLE AXIS) - raw data over training
     # ========================================================================
     if dynamic_exps and 'episode_beta' in dynamic_exps[0]['data']:
         exp = dynamic_exps[0]
@@ -249,16 +292,11 @@ def fig1_training_convergence(experiments, output_dir):
         steps = np.array(exp['data']['episode_beta']['steps'])
         values = np.array(exp['data']['episode_beta']['values'])
         
-        ax.plot(steps, values, alpha=0.3, color=COLOR_BETA, linewidth=0.5, label='Raw')
-        
-        if len(values) >= 100:
-            ma = np.convolve(values, np.ones(100)/100, mode='valid')
-            ax.plot(steps[99:], ma, color=COLOR_BETA, linewidth=2, label='100-ep MA')
+        ax.plot(steps, values, alpha=0.6, color=COLOR_BETA, linewidth=1)
         
         ax.set_xlabel(LABEL_EPISODE)
         ax.set_ylabel(LABEL_BETA)
         ax.set_title('Training Convergence (Dynamic): QoS Performance')
-        ax.legend()
         ax.grid(True, alpha=0.3)
         
         plt.tight_layout()
@@ -272,8 +310,11 @@ def fig1_training_convergence(experiments, output_dir):
 # FIGURE 2: Static Homogeneous
 # ============================================================================
 
-def fig2_static_homogeneous(exps_by_cat, output_dir):
-    """Bar chart of beta across homogeneous traffic profiles."""
+def fig2_static_homogeneous(exps_by_cat, baseline_data, output_dir):
+    """
+    Bar chart of beta across homogeneous traffic profiles.
+    Now includes baseline comparisons if available.
+    """
     print("\n[Figure 2] Static Homogeneous Performance...")
     
     exps = exps_by_cat['static_homogeneous']
@@ -286,8 +327,13 @@ def fig2_static_homogeneous(exps_by_cat, output_dir):
     exps = sorted(exps, key=lambda e: load_order.get(list(e['scenario'].values())[0], 999))
     
     profiles = []
-    betas = []
-    stds = []
+    sac_betas = []
+    sac_stds = []
+    
+    # Baseline data structures
+    baseline_names = ['equal', 'proportional', 'greedy', 'random']
+    baseline_betas = {name: [] for name in baseline_names}
+    baseline_stds = {name: [] for name in baseline_names}
     
     for exp in exps:
         profile = list(exp['scenario'].values())[0].replace('_', ' ').title()
@@ -299,39 +345,112 @@ def fig2_static_homogeneous(exps_by_cat, output_dir):
             
             if beta_val is not None and std_val is not None:
                 profiles.append(profile)
-                betas.append(beta_val)
-                stds.append(std_val)
+                sac_betas.append(beta_val)
+                sac_stds.append(std_val)
+                
+                # Get baseline results for this experiment
+                run_name = exp['run_name']
+                if run_name in baseline_data:
+                    for baseline_name in baseline_names:
+                        if baseline_name in baseline_data[run_name]:
+                            b_stats = baseline_data[run_name][baseline_name]['beta']
+                            b_val = b_stats.get('last_100_mean', b_stats.get('mean'))
+                            b_std = b_stats.get('last_100_std', b_stats.get('std'))
+                            baseline_betas[baseline_name].append(b_val)
+                            baseline_stds[baseline_name].append(b_std)
+                        else:
+                            baseline_betas[baseline_name].append(None)
+                            baseline_stds[baseline_name].append(None)
+                else:
+                    # No baseline data for this experiment
+                    for baseline_name in baseline_names:
+                        baseline_betas[baseline_name].append(None)
+                        baseline_stds[baseline_name].append(None)
     
     if not profiles:
         print("  ⚠️  No valid data")
         return
     
-    fig, ax = plt.subplots(figsize=(10, 6))
+    # Check if we have any baseline data
+    has_baselines = any(any(v is not None for v in baseline_betas[name]) for name in baseline_names)
     
+    fig, ax = plt.subplots(figsize=(12, 6))
+    
+    # Setup for grouped bar chart
     x_pos = np.arange(len(profiles))
-    ax.bar(x_pos, betas, yerr=stds, capsize=5, 
-           color=COLOR_HOMOGENEOUS, alpha=0.8, edgecolor='black', linewidth=1.2)
+    
+    if has_baselines:
+        # Grouped bar chart: SAC + Baselines
+        n_methods = 1 + sum(1 for name in baseline_names if any(v is not None for v in baseline_betas[name]))
+        width = 0.8 / n_methods
+        
+        methods_plotted = []
+        
+        # Plot SAC
+        offset = -width * (n_methods - 1) / 2
+        ax.bar(x_pos + offset, sac_betas, width, yerr=sac_stds, capsize=3,
+               label='SAC', color='steelblue', alpha=0.8, edgecolor='black', linewidth=1.2)
+        methods_plotted.append('SAC')
+        offset += width
+        
+        # Plot baselines
+        baseline_colors = {
+            'equal': 'lightcoral',
+            'proportional': 'lightgreen',
+            'greedy': 'gold',
+            'random': 'lightgray'
+        }
+        
+        for baseline_name in baseline_names:
+            if any(v is not None for v in baseline_betas[baseline_name]):
+                # Replace None with 0 for plotting (or skip)
+                plot_vals = [v if v is not None else 0 for v in baseline_betas[baseline_name]]
+                plot_stds = [v if v is not None else 0 for v in baseline_stds[baseline_name]]
+                
+                ax.bar(x_pos + offset, plot_vals, width, yerr=plot_stds, capsize=3,
+                       label=baseline_name.capitalize(), 
+                       color=baseline_colors.get(baseline_name, 'gray'),
+                       alpha=0.8, edgecolor='black', linewidth=1.2)
+                methods_plotted.append(baseline_name)
+                offset += width
+    else:
+        # Single SAC bars (no baselines)
+        ax.bar(x_pos, sac_betas, yerr=sac_stds, capsize=5,
+               color=COLOR_HOMOGENEOUS, alpha=0.8, edgecolor='black', linewidth=1.2)
     
     ax.set_xlabel('Traffic Profile')
     ax.set_ylabel(LABEL_BETA)
-    ax.set_title('SAC Performance Across Static Homogeneous Traffic')
+    title = 'Performance Across Static Homogeneous Traffic'
+    if has_baselines:
+        title += ' (SAC vs Baselines)'
+    ax.set_title(title)
     ax.set_xticks(x_pos)
     ax.set_xticklabels(profiles, rotation=45, ha='right')
     ax.grid(True, alpha=0.3, axis='y')
+    
+    if has_baselines:
+        ax.legend(loc='best', framealpha=0.9)
     
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, f'fig2_static_homogeneous.{FIGURE_FORMAT}'), 
                 dpi=FIGURE_DPI, bbox_inches='tight')
     plt.close()
-    print(f"  ✓ fig2_static_homogeneous.{FIGURE_FORMAT}")
+    
+    if has_baselines:
+        print(f"  ✓ fig2_static_homogeneous.{FIGURE_FORMAT} (with baselines)")
+    else:
+        print(f"  ✓ fig2_static_homogeneous.{FIGURE_FORMAT} (SAC only)")
 
 
 # ============================================================================
 # FIGURE 3: Heterogeneous
 # ============================================================================
 
-def fig3_heterogeneous(exps_by_cat, output_dir):
-    """Bar chart for heterogeneous scenarios."""
+def fig3_heterogeneous(exps_by_cat, baseline_data, output_dir):
+    """
+    Bar chart for heterogeneous scenarios.
+    Now includes baseline comparisons if available.
+    """
     print("\n[Figure 3] Heterogeneous Performance...")
     
     exps = exps_by_cat['static_heterogeneous']
@@ -340,8 +459,13 @@ def fig3_heterogeneous(exps_by_cat, output_dir):
         return
     
     scenarios = []
-    betas = []
-    stds = []
+    sac_betas = []
+    sac_stds = []
+    
+    # Baseline data
+    baseline_names = ['equal', 'proportional', 'greedy', 'random']
+    baseline_betas = {name: [] for name in baseline_names}
+    baseline_stds = {name: [] for name in baseline_names}
     
     for exp in exps:
         stats = exp['statistics'].get('beta')
@@ -352,31 +476,89 @@ def fig3_heterogeneous(exps_by_cat, output_dir):
             
             if beta_val is not None and std_val is not None:
                 scenarios.append(exp['scenario_str'])
-                betas.append(beta_val)
-                stds.append(std_val)
+                sac_betas.append(beta_val)
+                sac_stds.append(std_val)
+                
+                # Get baseline results
+                run_name = exp['run_name']
+                if run_name in baseline_data:
+                    for baseline_name in baseline_names:
+                        if baseline_name in baseline_data[run_name]:
+                            b_stats = baseline_data[run_name][baseline_name]['beta']
+                            b_val = b_stats.get('last_100_mean', b_stats.get('mean'))
+                            b_std = b_stats.get('last_100_std', b_stats.get('std'))
+                            baseline_betas[baseline_name].append(b_val)
+                            baseline_stds[baseline_name].append(b_std)
+                        else:
+                            baseline_betas[baseline_name].append(None)
+                            baseline_stds[baseline_name].append(None)
+                else:
+                    for baseline_name in baseline_names:
+                        baseline_betas[baseline_name].append(None)
+                        baseline_stds[baseline_name].append(None)
     
     if not scenarios:
         print("  ⚠️  No valid data")
         return
     
-    fig, ax = plt.subplots(figsize=(10, 6))
+    has_baselines = any(any(v is not None for v in baseline_betas[name]) for name in baseline_names)
+    
+    fig, ax = plt.subplots(figsize=(12, 6))
     
     x_pos = np.arange(len(scenarios))
-    ax.bar(x_pos, betas, yerr=stds, capsize=5,
-           color=COLOR_HETEROGENEOUS, alpha=0.8, edgecolor='black', linewidth=1.2)
+    
+    if has_baselines:
+        n_methods = 1 + sum(1 for name in baseline_names if any(v is not None for v in baseline_betas[name]))
+        width = 0.8 / n_methods
+        
+        offset = -width * (n_methods - 1) / 2
+        ax.bar(x_pos + offset, sac_betas, width, yerr=sac_stds, capsize=3,
+               label='SAC', color='steelblue', alpha=0.8, edgecolor='black', linewidth=1.2)
+        offset += width
+        
+        baseline_colors = {
+            'equal': 'lightcoral',
+            'proportional': 'lightgreen',
+            'greedy': 'gold',
+            'random': 'lightgray'
+        }
+        
+        for baseline_name in baseline_names:
+            if any(v is not None for v in baseline_betas[baseline_name]):
+                plot_vals = [v if v is not None else 0 for v in baseline_betas[baseline_name]]
+                plot_stds = [v if v is not None else 0 for v in baseline_stds[baseline_name]]
+                
+                ax.bar(x_pos + offset, plot_vals, width, yerr=plot_stds, capsize=3,
+                       label=baseline_name.capitalize(),
+                       color=baseline_colors.get(baseline_name, 'gray'),
+                       alpha=0.8, edgecolor='black', linewidth=1.2)
+                offset += width
+    else:
+        ax.bar(x_pos, sac_betas, yerr=sac_stds, capsize=5,
+               color=COLOR_HETEROGENEOUS, alpha=0.8, edgecolor='black', linewidth=1.2)
     
     ax.set_xlabel('Traffic Scenario')
     ax.set_ylabel(LABEL_BETA)
-    ax.set_title('SAC Performance Under Heterogeneous Traffic')
+    title = 'Performance Under Heterogeneous Traffic'
+    if has_baselines:
+        title += ' (SAC vs Baselines)'
+    ax.set_title(title)
     ax.set_xticks(x_pos)
     ax.set_xticklabels(scenarios, rotation=45, ha='right')
     ax.grid(True, alpha=0.3, axis='y')
+    
+    if has_baselines:
+        ax.legend(loc='best', framealpha=0.9)
     
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, f'fig3_heterogeneous.{FIGURE_FORMAT}'), 
                 dpi=FIGURE_DPI, bbox_inches='tight')
     plt.close()
-    print(f"  ✓ fig3_heterogeneous.{FIGURE_FORMAT}")
+    
+    if has_baselines:
+        print(f"  ✓ fig3_heterogeneous.{FIGURE_FORMAT} (with baselines)")
+    else:
+        print(f"  ✓ fig3_heterogeneous.{FIGURE_FORMAT} (SAC only)")
 
 
 # ============================================================================
@@ -699,6 +881,10 @@ def main():
                        help='Extracted data JSON file')
     parser.add_argument('--output-dir', type=str, default='./paper_figures', 
                        help='Output directory for figures')
+    parser.add_argument('--baseline-dir', type=str, default='./baseline_results',
+                       help='Directory containing baseline JSON files')
+    parser.add_argument('--include-baselines', action='store_true',
+                       help='Include baseline comparisons in figures')
     parser.add_argument('--debug', action='store_true',
                        help='Print debug information')
     
@@ -714,6 +900,11 @@ def main():
     data = load_extracted_data(args.data)
     experiments = data['experiments']
     
+    # Load baseline results if requested
+    baseline_data = {}
+    if args.include_baselines:
+        baseline_data = load_baseline_results(args.baseline_dir, experiments)
+    
     # Debug mode
     if args.debug:
         print("\nDEBUG MODE:")
@@ -722,6 +913,8 @@ def main():
             print(f"  Category: {exp['category']}")
             print(f"  Scenario: {exp['scenario']}")
             print(f"  Data keys: {list(exp['data'].keys())}")
+            if exp['run_name'] in baseline_data:
+                print(f"  Baselines: {list(baseline_data[exp['run_name']].keys())}")
         return
     
     # Categorize
@@ -733,8 +926,8 @@ def main():
     print("="*80)
     
     fig1_training_convergence(experiments, args.output_dir)
-    fig2_static_homogeneous(exps_by_cat, args.output_dir)
-    fig3_heterogeneous(exps_by_cat, args.output_dir)
+    fig2_static_homogeneous(exps_by_cat, baseline_data, args.output_dir)
+    fig3_heterogeneous(exps_by_cat, baseline_data, args.output_dir)
     fig4_allocation_patterns(experiments, args.output_dir)
     fig5_dynamic_scenarios(exps_by_cat, args.output_dir)
     
@@ -749,18 +942,25 @@ def main():
     print("✓ COMPLETE")
     print("="*80)
     print(f"\nGenerated figures:")
-    print(f"  - fig1a_reward_multi.png")
-    print(f"  - fig1b_beta_multi.png")
-    print(f"  - fig1c_dynamic_reward.png (single axis)")
-    print(f"  - fig1d_dynamic_beta.png (single axis)")
-    print(f"  - fig2_static_homogeneous.png")
-    print(f"  - fig3_heterogeneous.png")
-    print(f"  - fig4_allocation_patterns.png")
-    print(f"  - fig5a_dynamic_beta.png")
-    print(f"  - fig5b_dynamic_allocation.png")
-    print(f"  - fig5c_dynamic_profiles_ep80.png (episode 80 only)")
-    print(f"  - fig5d_dynamic_allocation_periods.png (multiple periods)")
-    print(f"  - summary_table.tex")
+    print(f"  Training Convergence:")
+    print(f"    - fig1a_reward_multi.png (multiple scenarios)")
+    print(f"    - fig1b_beta_multi.png (multiple scenarios)")
+    print(f"    - fig1c_dynamic_reward.png (single axis)")
+    print(f"    - fig1d_dynamic_beta.png (single axis)")
+    print(f"  Static Scenarios:")
+    print(f"    - fig2_static_homogeneous.png")
+    print(f"    - fig3_heterogeneous.png")
+    print(f"    - fig4_allocation_patterns.png (episode 80)")
+    print(f"  Dynamic Scenarios:")
+    print(f"    - fig5a_dynamic_beta.png (time series)")
+    print(f"    - fig5b_dynamic_allocation.png (time series)")
+    print(f"    - fig5c_dynamic_profiles_ep80.png (episode 80 profiles)")
+    print(f"    - fig5d_dynamic_allocation_periods_ep80.png (episode 80 periods)")
+    print(f"    - fig5e_dynamic_profiles_ep160.png (episode 160 profiles)")
+    print(f"    - fig5f_dynamic_allocation_periods_ep160.png (episode 160 periods)")
+    print(f"  Table:")
+    print(f"    - summary_table.tex")
+    print(f"\nTotal: 13 figures + 1 table")
 
 
 if __name__ == "__main__":
