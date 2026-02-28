@@ -16,7 +16,7 @@ Each slice can have:
 # ============================================================================
 
 # Network Topology
-K = 3           # Number of slices
+K = 2           # Number of slices
 C = 8           # Total RB capacity
 N = 8           # TTIs per DTI
 
@@ -57,7 +57,7 @@ DETERMINISTIC = False
 QOS_TABLE_FILES = [
     'qos_voip_all_metrics.json',
     'qos_cbr_all_metrics.json',
-    'qos_cbr_all_metrics.json'
+    #'qos_cbr_all_metrics.json'
 #    'qos_video_all_metrics.json'
 ]
 
@@ -70,13 +70,14 @@ QOS_TABLE_FILES = [
 
 QOS_METRICS_MULTI = [
     # Slice 0 (VoIP): Must satisfy BOTH delay AND loss
-    ['voIPFrameDelay', 'voIPFrameLoss', 'voIPJitter'],
+    #['voIPFrameDelay', 'voIPFrameLoss', 'voIPJitter'],
+    ['voIPJitter'],
     
     # Slice 1 (CBR): Must satisfy BOTH delay AND throughput
-    ['cbrFrameDelay'],
+    ['cbrFrameDelay']
     
     # Slice 2 (Video): Must satisfy BOTH segment loss AND delay
-    ['cbrFrameDelay']
+    #['cbrFrameDelay']
 #    ['rtVideoStreamingEnd2endDelaySegment', 'rtVideoStreamingInterArrivalTimeSegment', 'rtVideoStreamingPlayoutBufferLength']
 ]
 
@@ -84,13 +85,13 @@ QOS_METRICS_MULTI = [
 # Format: [[thresholds for slice 0], [thresholds for slice 1], ...]
 THRESHOLDS_MULTI = [
     # Slice 0: [delay threshold, loss threshold]
-    [40, 0.5, 75],      # delay <= 40ms AND loss <= 5%
-    
+    #[40, 0.5, 75],      # delay <= 40ms AND loss <= 5%
+    [75],
     # Slice 1: [delay threshold, throughput threshold (minimum)]
-    [1600],  # delay <= 1600ms AND throughput >= 500 kbps
+    [1600]  # delay <= 1600ms AND throughput >= 500 kbps
     
     # Slice 2: [loss threshold, delay threshold]
-    [1600]
+    #[1600]
 #    [30, 0.65, 1.1]        # loss <= 15% AND delay <= 500ms
 ]
 
@@ -102,13 +103,13 @@ THRESHOLDS_MULTI = [
 # 'higher' = metric should be above threshold (throughput, rate)
 QOS_METRIC_DIRECTIONS = [
     # Slice 0
-    ['lower', 'lower', 'lower'],     # delay: lower is better, loss: lower is better
-    
+    #['lower', 'lower', 'lower'],     # delay: lower is better, loss: lower is better
+    ['lower'],
     # Slice 1
-    ['lower'],    # delay: lower is better, throughput: higher is better
+    ['lower']    # delay: lower is better, throughput: higher is better
     
     # Slice 2
-    ['lower']
+    #['lower']
 #    ['lower', 'lower', 'higher']      # loss: lower is better, delay: lower is better
 ]
 
@@ -232,13 +233,13 @@ TRANSPORT_DELAY_THRESHOLDS = [
 # Enable efficient resource allocation (K+1 actions with "null slice")
 # When True: Agent can choose to NOT allocate all capacity (save resources)
 # When False: Agent must allocate all capacity (standard SAC, sum = C)
-USE_EFFICIENT_ALLOCATION = True
+USE_EFFICIENT_ALLOCATION = False
 
 # Reward weight for unused capacity (only used if USE_EFFICIENT_ALLOCATION=True)
 # Positive value: Rewards saving resources (encourages efficiency)
 # Zero: Neutral (no reward/penalty for unused capacity)
 # Negative: Penalizes unused capacity (encourages full allocation)
-UNUSED_CAPACITY_REWARD_WEIGHT = -0.01
+UNUSED_CAPACITY_REWARD_WEIGHT = 0.1
 
 # How efficient allocation works:
 # - Actor output dimension: K+1 (K slices + 1 "null slice")
@@ -252,7 +253,9 @@ UNUSED_CAPACITY_REWARD_WEIGHT = -0.01
 # TRAFFIC GENERATION
 # ============================================================================
 
-TRAFFIC_PROFILES = ['dynamic', 'dynamic', 'dynamic']
+TRAFFIC_PROFILES = ['dynamic', 'dynamic']
+#TRAFFIC_PROFILES = ['medium', 'high']
+# Options: 'uniform', 'extremely_low', 'low', 'medium', 'high', 'extremely_high', 'dynamic', 'external'
 
 # Dynamic Profile Configuration
 DYNAMIC_PROFILE_CONFIG = {
@@ -270,7 +273,7 @@ T_MAX = 2000
 # ALGORITHM 2: SAC TRAINING PARAMETERS
 # ============================================================================
 
-NUM_EPISODES = 100
+NUM_EPISODES = 200
 MAX_DTIS = 2000
 
 # Learning Rates

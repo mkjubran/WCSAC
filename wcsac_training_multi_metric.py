@@ -266,6 +266,13 @@ def train_wcsac():
             for k in range(cfg['K']):
                 writer.add_scalar(f'dti/traffic_slice{k}', info['traffic'][k], global_step)
             
+            # Aggregate metrics: total allocation and total traffic
+            total_allocation = sum(action[:cfg['K']])  # Exclude null allocation if present
+            total_traffic = sum(info['traffic'])
+            writer.add_scalar('dti/total_allocation', total_allocation, global_step)
+            writer.add_scalar('dti/total_traffic', total_traffic, global_step)
+            writer.add_scalar('dti/allocation_utilization', total_allocation / cfg['C'], global_step)
+            
             # Update statistics
             episode_reward += reward
             episode_wc_reward += wc_reward
