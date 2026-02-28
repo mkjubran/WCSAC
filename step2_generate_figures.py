@@ -907,6 +907,41 @@ def fig5_dynamic_scenarios(exps_by_cat, output_dir):
             print(f"  ✓ fig5d_dynamic_allocation_periods.{FIGURE_FORMAT} ({num_periods} periods)")
     
     # ========================================================================
+    # NEW: Continuous allocation curves for episode 80 (like TensorBoard)
+    # ========================================================================
+    if 'ep80_action_slice0' in data and 'ep80_action_slice1' in data:
+        fig, ax = plt.subplots(figsize=(14, 6))
+        
+        # Get data
+        slice0_values = data['ep80_action_slice0']['values']
+        slice1_values = data['ep80_action_slice1']['values']
+        
+        # Create DTI indices (0 to len-1)
+        dtis = np.arange(len(slice0_values))
+        
+        # Plot continuous curves (like TensorBoard)
+        ax.plot(dtis, slice0_values, color='steelblue', alpha=0.8, linewidth=1.5, 
+               label='Slice 0')
+        ax.plot(dtis, slice1_values, color='coral', alpha=0.8, linewidth=1.5, 
+               label='Slice 1')
+        
+        ax.set_xlabel('DTI (within Episode 80)', fontsize=12)
+        ax.set_ylabel(LABEL_RBS, fontsize=12)
+        ax.set_title('Continuous Allocation Over Time (Episode 80)', fontsize=14, fontweight='bold')
+        ax.legend(loc='best', framealpha=0.9)
+        ax.grid(True, alpha=0.3)
+        
+        # Add vertical lines at period boundaries (every 200 DTIs)
+        for period in range(1, 10):
+            ax.axvline(x=period * 200, color='gray', linestyle=':', alpha=0.5, linewidth=1)
+        
+        plt.tight_layout()
+        plt.savefig(os.path.join(output_dir, f'fig5d2_continuous_allocation_ep80.{FIGURE_FORMAT}'), 
+                    dpi=FIGURE_DPI, bbox_inches='tight')
+        plt.close()
+        print(f"  ✓ fig5d2_continuous_allocation_ep80.{FIGURE_FORMAT}")
+    
+    # ========================================================================
     # Figure 5e: Active profiles for EPISODE 160
     # ========================================================================
     if 'ep160_action_slice0' in data:
@@ -1023,6 +1058,41 @@ def fig5_dynamic_scenarios(exps_by_cat, output_dir):
                     dpi=FIGURE_DPI, bbox_inches='tight')
         plt.close()
         print(f"  ✓ fig5f_dynamic_allocation_periods_ep160.{FIGURE_FORMAT} ({num_periods} periods)")
+    
+    # ========================================================================
+    # NEW: Continuous allocation curves for episode 160 (like TensorBoard)
+    # ========================================================================
+    if 'ep160_action_slice0' in data and 'ep160_action_slice1' in data:
+        fig, ax = plt.subplots(figsize=(14, 6))
+        
+        # Get data
+        slice0_values = data['ep160_action_slice0']['values']
+        slice1_values = data['ep160_action_slice1']['values']
+        
+        # Create DTI indices (0 to len-1)
+        dtis = np.arange(len(slice0_values))
+        
+        # Plot continuous curves (like TensorBoard)
+        ax.plot(dtis, slice0_values, color='steelblue', alpha=0.8, linewidth=1.5, 
+               label='Slice 0')
+        ax.plot(dtis, slice1_values, color='coral', alpha=0.8, linewidth=1.5, 
+               label='Slice 1')
+        
+        ax.set_xlabel('DTI (within Episode 160)', fontsize=12)
+        ax.set_ylabel(LABEL_RBS, fontsize=12)
+        ax.set_title('Continuous Allocation Over Time (Episode 160)', fontsize=14, fontweight='bold')
+        ax.legend(loc='best', framealpha=0.9)
+        ax.grid(True, alpha=0.3)
+        
+        # Add vertical lines at period boundaries (every 200 DTIs)
+        for period in range(1, 10):
+            ax.axvline(x=period * 200, color='gray', linestyle=':', alpha=0.5, linewidth=1)
+        
+        plt.tight_layout()
+        plt.savefig(os.path.join(output_dir, f'fig5f2_continuous_allocation_ep160.{FIGURE_FORMAT}'), 
+                    dpi=FIGURE_DPI, bbox_inches='tight')
+        plt.close()
+        print(f"  ✓ fig5f2_continuous_allocation_ep160.{FIGURE_FORMAT}")
 
 
 def fig_actor_loss_comparison(experiments, output_dir):
