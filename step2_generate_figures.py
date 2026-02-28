@@ -385,11 +385,13 @@ def fig2_static_homogeneous(exps_by_cat, baseline_data, output_dir):
         width = 0.8 / n_methods
         
         methods_plotted = []
+        bar_containers = []
         
         # Plot SAC
         offset = -width * (n_methods - 1) / 2
-        ax.bar(x_pos + offset, sac_betas, width, yerr=sac_stds, capsize=3,
+        bars_sac = ax.bar(x_pos + offset, sac_betas, width, yerr=sac_stds, capsize=3,
                label='SAC', color='steelblue', alpha=0.8, edgecolor='black', linewidth=1.2)
+        bar_containers.append(bars_sac)
         methods_plotted.append('SAC')
         offset += width
         
@@ -407,16 +409,33 @@ def fig2_static_homogeneous(exps_by_cat, baseline_data, output_dir):
                 plot_vals = [v if v is not None else 0 for v in baseline_betas[baseline_name]]
                 plot_stds = [v if v is not None else 0 for v in baseline_stds[baseline_name]]
                 
-                ax.bar(x_pos + offset, plot_vals, width, yerr=plot_stds, capsize=3,
+                bars = ax.bar(x_pos + offset, plot_vals, width, yerr=plot_stds, capsize=3,
                        label=baseline_name.capitalize(), 
                        color=baseline_colors.get(baseline_name, 'gray'),
                        alpha=0.8, edgecolor='black', linewidth=1.2)
+                bar_containers.append(bars)
                 methods_plotted.append(baseline_name)
                 offset += width
+        
+        # Add value labels on top of each bar
+        for bars in bar_containers:
+            for bar in bars:
+                height = bar.get_height()
+                if height > 0:  # Only label non-zero bars
+                    ax.text(bar.get_x() + bar.get_width()/2., height,
+                           f'{height:.3f}',
+                           ha='center', va='bottom', fontsize=8, rotation=0)
     else:
         # Single SAC bars (no baselines)
-        ax.bar(x_pos, sac_betas, yerr=sac_stds, capsize=5,
+        bars = ax.bar(x_pos, sac_betas, yerr=sac_stds, capsize=5,
                color=COLOR_HOMOGENEOUS, alpha=0.8, edgecolor='black', linewidth=1.2)
+        
+        # Add value labels
+        for bar in bars:
+            height = bar.get_height()
+            ax.text(bar.get_x() + bar.get_width()/2., height,
+                   f'{height:.3f}',
+                   ha='center', va='bottom', fontsize=9)
     
     ax.set_xlabel('Traffic Profile')
     ax.set_ylabel(LABEL_BETA)
@@ -511,9 +530,12 @@ def fig3_heterogeneous(exps_by_cat, baseline_data, output_dir):
         n_methods = 1 + sum(1 for name in baseline_names if any(v is not None for v in baseline_betas[name]))
         width = 0.8 / n_methods
         
+        bar_containers = []
+        
         offset = -width * (n_methods - 1) / 2
-        ax.bar(x_pos + offset, sac_betas, width, yerr=sac_stds, capsize=3,
+        bars_sac = ax.bar(x_pos + offset, sac_betas, width, yerr=sac_stds, capsize=3,
                label='SAC', color='steelblue', alpha=0.8, edgecolor='black', linewidth=1.2)
+        bar_containers.append(bars_sac)
         offset += width
         
         baseline_colors = {
@@ -528,14 +550,31 @@ def fig3_heterogeneous(exps_by_cat, baseline_data, output_dir):
                 plot_vals = [v if v is not None else 0 for v in baseline_betas[baseline_name]]
                 plot_stds = [v if v is not None else 0 for v in baseline_stds[baseline_name]]
                 
-                ax.bar(x_pos + offset, plot_vals, width, yerr=plot_stds, capsize=3,
+                bars = ax.bar(x_pos + offset, plot_vals, width, yerr=plot_stds, capsize=3,
                        label=baseline_name.capitalize(),
                        color=baseline_colors.get(baseline_name, 'gray'),
                        alpha=0.8, edgecolor='black', linewidth=1.2)
+                bar_containers.append(bars)
                 offset += width
+        
+        # Add value labels on top of each bar
+        for bars in bar_containers:
+            for bar in bars:
+                height = bar.get_height()
+                if height > 0:  # Only label non-zero bars
+                    ax.text(bar.get_x() + bar.get_width()/2., height,
+                           f'{height:.3f}',
+                           ha='center', va='bottom', fontsize=8, rotation=0)
     else:
-        ax.bar(x_pos, sac_betas, yerr=sac_stds, capsize=5,
+        bars = ax.bar(x_pos, sac_betas, yerr=sac_stds, capsize=5,
                color=COLOR_HETEROGENEOUS, alpha=0.8, edgecolor='black', linewidth=1.2)
+        
+        # Add value labels
+        for bar in bars:
+            height = bar.get_height()
+            ax.text(bar.get_x() + bar.get_width()/2., height,
+                   f'{height:.3f}',
+                   ha='center', va='bottom', fontsize=9)
     
     ax.set_xlabel('Traffic Scenario')
     ax.set_ylabel(LABEL_BETA)
