@@ -98,75 +98,170 @@ def categorize_experiments(experiments):
 
 def fig1_training_convergence(experiments, output_dir):
     """
-    Figure 1: Training convergence (reward and beta over episodes)
-    Choose Medium-Medium scenario if available
+    Figure 1a: Training convergence - Episode Reward (multiple scenarios)
+    Figure 1b: Training convergence - Beta (multiple scenarios)
+    Figure 1c: Training convergence - Dynamic scenario
+    Generate as separate PNG files
     """
     print("\n[Figure 1] Training Convergence...")
     
-    # Find Medium-Medium experiment
-    exp = None
-    for e in experiments:
-        scenario_lower = e['scenario_str'].lower()
-        if 'medium' in scenario_lower and e['category'] == 'static_homogeneous':
-            exp = e
-            break
+    # Categorize experiments
+    homogeneous_exps = [e for e in experiments if e['category'] == 'static_homogeneous']
+    heterogeneous_exps = [e for e in experiments if e['category'] == 'static_heterogeneous']
+    dynamic_exps = [e for e in experiments if e['category'] == 'dynamic']
     
-    if not exp:
-        exp = experiments[0] if experiments else None
+    # ========================================================================
+    # Figure 1a: Episode Reward - Multiple Static Scenarios
+    # ========================================================================
+    fig, ax = plt.subplots(figsize=(10, 6))
     
-    if not exp:
-        print("  ⚠️  No experiments available")
-        return
+    # Define colors for different scenarios
+    colors = {
+        'extremely_low': '#1f77b4',  # Blue
+        'low': '#2ca02c',             # Green
+        'medium': '#ff7f0e',          # Orange
+        'high': '#d62728',            # Red
+        'extremely_high': '#9467bd'   # Purple
+    }
     
-    print(f"  Using: {exp['scenario_str']}")
+    scenarios_plotted = []
     
-    data = exp['data']
-    
-    fig, axes = plt.subplots(2, 1, figsize=(10, 8))
-    
-    # Top: Reward
-    if 'episode_reward' in data:
-        steps = np.array(data['episode_reward']['steps'])
-        values = np.array(data['episode_reward']['values'])
+    # Plot homogeneous scenarios
+    for exp in homogeneous_exps:
+        profile = list(exp['scenario'].values())[0]
         
-        axes[0].plot(steps, values, alpha=0.3, color=COLOR_REWARD, linewidth=0.5, label='Raw')
+        if 'episode_reward' in exp['data']:
+            steps = np.array(exp['data']['episode_reward']['steps'])
+            values = np.array(exp['data']['episode_reward']['values'])
+            
+            # Moving average
+            if len(values) >= 100:
+                ma = np.convolve(values, np.ones(100)/100, mode='valid')
+                color = colors.get(profile, 'gray')
+                label = profile.replace('_', ' ').title()
+                
+                ax.plot(steps[99:], ma, color=color, linewidth=2, label=label, alpha=0.8)
+                scenarios_plotted.append(profile)
+    
+    # Plot one heterogeneous as example (if available)
+    if heterogeneous_exps and 'episode_reward' in heterogeneous_exps[0]['data']:
+        exp = heterogeneous_exps[0]
+        steps = np.array(exp['data']['episode_reward']['steps'])
+        values = np.array(exp['data']['episode_reward']['values'])
         
-        # Moving average
         if len(values) >= 100:
             ma = np.convolve(values, np.ones(100)/100, mode='valid')
-            axes[0].plot(steps[99:], ma, color=COLOR_REWARD, linewidth=2, label='100-ep MA')
-        
-        axes[0].set_ylabel(LABEL_REWARD)
-        axes[0].set_title('Training Convergence: Episode Reward')
-        axes[0].legend()
-        axes[0].grid(True, alpha=0.3)
+            ax.plot(steps[99:], ma, color='black', linewidth=2, 
+                   label=exp['scenario_str'], alpha=0.8, linestyle='--')
     
-    # Bottom: Beta
-    if 'episode_beta' in data:
-        steps = np.array(data['episode_beta']['steps'])
-        values = np.array(data['episode_beta']['values'])
-        
-        axes[1].plot(steps, values, alpha=0.3, color=COLOR_BETA, linewidth=0.5, label='Raw')
-        
-        # Moving average
-        if len(values) >= 100:
-            ma = np.convolve(values, np.ones(100)/100, mode='valid')
-            axes[1].plot(steps[99:], ma, color=COLOR_BETA, linewidth=2, label='100-ep MA')
-        
-        axes[1].set_xlabel(LABEL_EPISODE)
-        axes[1].set_ylabel(LABEL_BETA)
-        axes[1].set_title('Training Convergence: QoS Performance')
-        axes[1].axhline(y=BETA_TARGET, color=COLOR_TARGET, linestyle='--', 
-                       label=f'Target (β < {BETA_TARGET})', alpha=0.5)
-        axes[1].legend()
-        axes[1].grid(True, alpha=0.3)
+    ax.set_xlabel(LABEL_EPISODE)
+    ax.set_ylabel(LABEL_REWARD)
+    ax.set_title('Training Convergence: Episode Reward (Multiple Scenarios)')
+    ax.legend(loc='best', framealpha=0.9)
+    ax.grid(True, alpha=0.3)
     
     plt.tight_layout()
-    output_path = os.path.join(output_dir, f'fig1_training_convergence.{FIGURE_FORMAT}')
+    output_path = os.path.join(output_dir, f'fig1a_reward_multi.{FIGURE_FORMAT}')
     plt.savefig(output_path, dpi=FIGURE_DPI, bbox_inches='tight')
     plt.close()
+    print(f"  ✓ Saved: fig1a_reward_multi.{FIGURE_FORMAT} ({len(scenarios_plotted)} scenarios)")
     
-    print(f"  ✓ Saved: {output_path}")
+    # ========================================================================
+    # Figure 1b: QoS Violation (Beta) - Multiple Static Scenarios
+    # ========================================================================
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    scenarios_plotted = []
+    
+    # Plot homogeneous scenarios
+    for exp in homogeneous_exps:
+        profile = list(exp['scenario'].values())[0]
+        
+        if 'episode_beta' in exp['data']:
+            steps = np.array(exp['data']['episode_beta']['steps'])
+            values = np.array(exp['data']['episode_beta']['values'])
+            
+            # Moving average
+            if len(values) >= 100:
+                ma = np.convolve(values, np.ones(100)/100, mode='valid')
+                color = colors.get(profile, 'gray')
+                label = profile.replace('_', ' ').title()
+                
+                ax.plot(steps[99:], ma, color=color, linewidth=2, label=label, alpha=0.8)
+                scenarios_plotted.append(profile)
+    
+    # Plot one heterogeneous as example (if available)
+    if heterogeneous_exps and 'episode_beta' in heterogeneous_exps[0]['data']:
+        exp = heterogeneous_exps[0]
+        steps = np.array(exp['data']['episode_beta']['steps'])
+        values = np.array(exp['data']['episode_beta']['values'])
+        
+        if len(values) >= 100:
+            ma = np.convolve(values, np.ones(100)/100, mode='valid')
+            ax.plot(steps[99:], ma, color='black', linewidth=2, 
+                   label=exp['scenario_str'], alpha=0.8, linestyle='--')
+    
+    ax.set_xlabel(LABEL_EPISODE)
+    ax.set_ylabel(LABEL_BETA)
+    ax.set_title('Training Convergence: QoS Performance (Multiple Scenarios)')
+    ax.legend(loc='best', framealpha=0.9)
+    ax.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    output_path = os.path.join(output_dir, f'fig1b_beta_multi.{FIGURE_FORMAT}')
+    plt.savefig(output_path, dpi=FIGURE_DPI, bbox_inches='tight')
+    plt.close()
+    print(f"  ✓ Saved: fig1b_beta_multi.{FIGURE_FORMAT} ({len(scenarios_plotted)} scenarios)")
+    
+    # ========================================================================
+    # Figure 1c: Dynamic Scenario Training Convergence (Both Metrics)
+    # ========================================================================
+    if dynamic_exps:
+        exp = dynamic_exps[0]
+        
+        # Create figure with 2 subplots for dynamic case only
+        fig, axes = plt.subplots(2, 1, figsize=(10, 8))
+        
+        # Top: Reward
+        if 'episode_reward' in exp['data']:
+            steps = np.array(exp['data']['episode_reward']['steps'])
+            values = np.array(exp['data']['episode_reward']['values'])
+            
+            axes[0].plot(steps, values, alpha=0.3, color=COLOR_REWARD, linewidth=0.5, label='Raw')
+            
+            if len(values) >= 100:
+                ma = np.convolve(values, np.ones(100)/100, mode='valid')
+                axes[0].plot(steps[99:], ma, color=COLOR_REWARD, linewidth=2, label='100-ep MA')
+            
+            axes[0].set_ylabel(LABEL_REWARD)
+            axes[0].set_title(f'Training Convergence (Dynamic): Episode Reward')
+            axes[0].legend()
+            axes[0].grid(True, alpha=0.3)
+        
+        # Bottom: Beta
+        if 'episode_beta' in exp['data']:
+            steps = np.array(exp['data']['episode_beta']['steps'])
+            values = np.array(exp['data']['episode_beta']['values'])
+            
+            axes[1].plot(steps, values, alpha=0.3, color=COLOR_BETA, linewidth=0.5, label='Raw')
+            
+            if len(values) >= 100:
+                ma = np.convolve(values, np.ones(100)/100, mode='valid')
+                axes[1].plot(steps[99:], ma, color=COLOR_BETA, linewidth=2, label='100-ep MA')
+            
+            axes[1].set_xlabel(LABEL_EPISODE)
+            axes[1].set_ylabel(LABEL_BETA)
+            axes[1].set_title(f'Training Convergence (Dynamic): QoS Performance')
+            axes[1].legend()
+            axes[1].grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        output_path = os.path.join(output_dir, f'fig1c_dynamic_training.{FIGURE_FORMAT}')
+        plt.savefig(output_path, dpi=FIGURE_DPI, bbox_inches='tight')
+        plt.close()
+        print(f"  ✓ Saved: fig1c_dynamic_training.{FIGURE_FORMAT}")
+    else:
+        print(f"  ⚠️  No dynamic experiments for fig1c")
 
 
 # ============================================================================
@@ -231,9 +326,7 @@ def fig2_static_homogeneous(exps_by_cat, output_dir):
     ax.set_title('SAC Performance Across Static Homogeneous Traffic')
     ax.set_xticks(x_pos)
     ax.set_xticklabels(profiles, rotation=45, ha='right')
-    ax.axhline(y=BETA_TARGET, color=COLOR_TARGET, linestyle='--', 
-               label=f'Target', alpha=0.7)
-    ax.legend()
+    # NO THRESHOLD LINE
     ax.grid(True, alpha=0.3, axis='y')
     
     plt.tight_layout()
@@ -297,9 +390,7 @@ def fig3_heterogeneous(exps_by_cat, output_dir):
     ax.set_title('SAC Performance Under Heterogeneous Traffic')
     ax.set_xticks(x_pos)
     ax.set_xticklabels(scenarios, rotation=45, ha='right')
-    ax.axhline(y=BETA_TARGET, color=COLOR_TARGET, linestyle='--', 
-               label='Target', alpha=0.7)
-    ax.legend()
+    # NO THRESHOLD LINE
     ax.grid(True, alpha=0.3, axis='y')
     
     plt.tight_layout()
@@ -374,7 +465,11 @@ def fig4_allocation_patterns(experiments, output_dir):
 
 def fig5_dynamic_adaptation(exps_by_cat, output_dir):
     """
-    Figure 5: Time series showing adaptation to dynamic traffic
+    Figure 5a: Dynamic adaptation - Beta over time
+    Figure 5b: Dynamic adaptation - Allocations over time
+    Figure 5c: Dynamic adaptation - Active traffic profiles over time
+    Figure 5d: Dynamic allocation patterns (box plots, like fig4 but for dynamic)
+    Generate as separate PNG files
     """
     print("\n[Figure 5] Dynamic Adaptation...")
     
@@ -393,43 +488,127 @@ def fig5_dynamic_adaptation(exps_by_cat, output_dir):
     steps = np.array(data['dti_beta']['steps'])
     betas = np.array(data['dti_beta']['values'])
     
-    fig, axes = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
+    # ========================================================================
+    # Figure 5a: Beta over time with switches
+    # ========================================================================
+    fig, ax = plt.subplots(figsize=(12, 6))
     
-    # Top: Beta
-    axes[0].plot(steps, betas, color=COLOR_BETA, alpha=0.7, linewidth=1)
-    axes[0].set_ylabel(LABEL_BETA)
-    axes[0].set_title('Dynamic Traffic Adaptation (Switches Every 100 DTIs)')
-    axes[0].axhline(y=BETA_TARGET, color=COLOR_TARGET, linestyle='--', 
-                   alpha=0.5, label='Target')
-    axes[0].grid(True, alpha=0.3)
-    axes[0].legend()
+    ax.plot(steps, betas, color=COLOR_BETA, alpha=0.7, linewidth=1)
+    ax.set_xlabel(LABEL_DTI)
+    ax.set_ylabel(LABEL_BETA)
+    ax.set_title('Dynamic Traffic Adaptation: QoS Performance')
+    # NO THRESHOLD LINE
+    ax.grid(True, alpha=0.3)
     
-    # Mark switches
-    for switch in range(100, int(max(steps)), 100):
-        axes[0].axvline(x=switch, color='gray', linestyle=':', alpha=0.5)
-        axes[1].axvline(x=switch, color='gray', linestyle=':', alpha=0.5)
+    # Mark switches every 200 DTIs
+    for switch in range(200, int(max(steps)), 200):
+        ax.axvline(x=switch, color='gray', linestyle=':', alpha=0.5)
     
-    # Bottom: Allocations
+    plt.tight_layout()
+    output_path = os.path.join(output_dir, f'fig5a_dynamic_beta.{FIGURE_FORMAT}')
+    plt.savefig(output_path, dpi=FIGURE_DPI, bbox_inches='tight')
+    plt.close()
+    print(f"  ✓ Saved: fig5a_dynamic_beta.{FIGURE_FORMAT}")
+    
+    # ========================================================================
+    # Figure 5b: Per-slice allocations over time
+    # ========================================================================
+    fig, ax = plt.subplots(figsize=(12, 6))
+    
     for key in ['dti_action_slice0', 'dti_action_slice1']:
         if key in data:
             slice_num = key.split('slice')[-1]
             alloc_steps = np.array(data[key]['steps'])
             alloc_values = np.array(data[key]['values'])
-            axes[1].plot(alloc_steps, alloc_values, 
-                        label=f'Slice {slice_num}', alpha=0.7, linewidth=1)
+            ax.plot(alloc_steps, alloc_values, 
+                   label=f'Slice {slice_num}', alpha=0.7, linewidth=1)
     
-    axes[1].set_xlabel(LABEL_DTI)
-    axes[1].set_ylabel(LABEL_RBS)
-    axes[1].set_title('Per-Slice Allocation')
-    axes[1].legend()
-    axes[1].grid(True, alpha=0.3)
+    ax.set_xlabel(LABEL_DTI)
+    ax.set_ylabel(LABEL_RBS)
+    ax.set_title('Dynamic Traffic Adaptation: Resource Allocation')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    
+    # Mark switches every 200 DTIs
+    for switch in range(200, int(max(steps)), 200):
+        ax.axvline(x=switch, color='gray', linestyle=':', alpha=0.5)
     
     plt.tight_layout()
-    output_path = os.path.join(output_dir, f'fig5_dynamic_adaptation.{FIGURE_FORMAT}')
+    output_path = os.path.join(output_dir, f'fig5b_dynamic_allocation.{FIGURE_FORMAT}')
     plt.savefig(output_path, dpi=FIGURE_DPI, bbox_inches='tight')
     plt.close()
+    print(f"  ✓ Saved: fig5b_dynamic_allocation.{FIGURE_FORMAT}")
     
-    print(f"  ✓ Saved: {output_path}")
+    # ========================================================================
+    # Figure 5c: Active traffic profiles over time
+    # ========================================================================
+    if 'dti_active_profile_slice0' in data and 'dti_active_profile_slice1' in data:
+        fig, ax = plt.subplots(figsize=(12, 6))
+        
+        # Profile mapping
+        profile_names = {
+            0: 'Uniform',
+            1: 'Extremely Low',
+            2: 'Low',
+            3: 'Medium',
+            4: 'High',
+            5: 'Extremely High',
+            6: 'External'
+        }
+        
+        for key in ['dti_active_profile_slice0', 'dti_active_profile_slice1']:
+            slice_num = key.split('slice')[-1]
+            prof_steps = np.array(data[key]['steps'])
+            prof_values = np.array(data[key]['values'])
+            ax.plot(prof_steps, prof_values, 
+                   label=f'Slice {slice_num}', alpha=0.7, linewidth=2, marker='o', markersize=3)
+        
+        ax.set_xlabel(LABEL_DTI)
+        ax.set_ylabel('Active Traffic Profile')
+        ax.set_title('Dynamic Traffic Adaptation: Traffic Profile Changes')
+        ax.set_yticks(list(profile_names.keys()))
+        ax.set_yticklabels(list(profile_names.values()))
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        
+        # Mark switches every 200 DTIs
+        for switch in range(200, int(max(steps)), 200):
+            ax.axvline(x=switch, color='gray', linestyle=':', alpha=0.5)
+        
+        plt.tight_layout()
+        output_path = os.path.join(output_dir, f'fig5c_dynamic_profiles.{FIGURE_FORMAT}')
+        plt.savefig(output_path, dpi=FIGURE_DPI, bbox_inches='tight')
+        plt.close()
+        print(f"  ✓ Saved: fig5c_dynamic_profiles.{FIGURE_FORMAT}")
+    
+    # ========================================================================
+    # Figure 5d: Allocation patterns (box plots) for dynamic scenario
+    # Similar to fig4 but for dynamic experiment
+    # ========================================================================
+    # Find episode 80 data for dynamic experiment
+    allocations = {}
+    for key in ['ep80_action_slice0', 'ep80_action_slice1']:
+        if key in data:
+            slice_num = key.split('slice')[-1]
+            allocations[f'Slice {slice_num}'] = data[key]['values']
+    
+    if allocations:
+        fig, ax = plt.subplots(figsize=(8, 6))
+        
+        ax.boxplot(allocations.values(), labels=allocations.keys(),
+                   patch_artist=True,
+                   boxprops=dict(facecolor='lightgreen', alpha=0.7),
+                   medianprops=dict(color='red', linewidth=2))
+        
+        ax.set_ylabel(LABEL_RBS)
+        ax.set_title(f'Allocation Distribution - {exp["scenario_str"]} (Episode 80)')
+        ax.grid(True, alpha=0.3, axis='y')
+        
+        plt.tight_layout()
+        output_path = os.path.join(output_dir, f'fig5d_dynamic_allocation_patterns.{FIGURE_FORMAT}')
+        plt.savefig(output_path, dpi=FIGURE_DPI, bbox_inches='tight')
+        plt.close()
+        print(f"  ✓ Saved: fig5d_dynamic_allocation_patterns.{FIGURE_FORMAT}")
 
 
 # ============================================================================
@@ -561,12 +740,23 @@ def main():
     print("="*80)
     print(f"\nOutput directory: {args.output_dir}")
     print(f"\nGenerated files:")
-    print(f"  - fig1_training_convergence.{FIGURE_FORMAT}")
-    print(f"  - fig2_static_homogeneous.{FIGURE_FORMAT}")
-    print(f"  - fig3_heterogeneous.{FIGURE_FORMAT}")
-    print(f"  - fig4_allocation_patterns.{FIGURE_FORMAT}")
-    print(f"  - fig5_dynamic_adaptation.{FIGURE_FORMAT}")
-    print(f"  - summary_table.tex")
+    print(f"\n  Training Convergence:")
+    print(f"    - fig1a_reward_multi.{FIGURE_FORMAT} (Reward: Multiple Scenarios)")
+    print(f"    - fig1b_beta_multi.{FIGURE_FORMAT} (Beta: Multiple Scenarios)")
+    print(f"    - fig1c_dynamic_training.{FIGURE_FORMAT} (Dynamic: Both Metrics)")
+    print(f"\n  Static Scenarios:")
+    print(f"    - fig2_static_homogeneous.{FIGURE_FORMAT} (Homogeneous Performance)")
+    print(f"    - fig3_heterogeneous.{FIGURE_FORMAT} (Heterogeneous Performance)")
+    print(f"    - fig4_allocation_patterns.{FIGURE_FORMAT} (Static: Allocation Box Plots)")
+    print(f"\n  Dynamic Scenarios:")
+    print(f"    - fig5a_dynamic_beta.{FIGURE_FORMAT} (QoS Time Series)")
+    print(f"    - fig5b_dynamic_allocation.{FIGURE_FORMAT} (Allocation Time Series)")
+    print(f"    - fig5c_dynamic_profiles.{FIGURE_FORMAT} (Traffic Profile Changes)")
+    print(f"    - fig5d_dynamic_allocation_patterns.{FIGURE_FORMAT} (Allocation Box Plots)")
+    print(f"\n  Table:")
+    print(f"    - summary_table.tex (LaTeX Table)")
+    print(f"\nTotal: 10 figures + 1 table")
+    print(f"\nNote: Profile switches occur every 200 DTIs (not 100)")
     print(f"\nTo modify figures:")
     print(f"  1. Edit settings at top of this script (colors, labels, etc.)")
     print(f"  2. Re-run: python3 step2_generate_figures.py --data {args.data}")

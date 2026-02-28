@@ -72,6 +72,8 @@ def extract_essential_metrics(tb_data):
         'dti/beta': 'dti_beta',
         'dti/action_slice0': 'dti_action_slice0',
         'dti/action_slice1': 'dti_action_slice1',
+        'dti/active_profile_slice0': 'dti_active_profile_slice0',
+        'dti/active_profile_slice1': 'dti_active_profile_slice1',
         'episode_80/action_slice0': 'ep80_action_slice0',
         'episode_80/action_slice1': 'ep80_action_slice1',
     }
