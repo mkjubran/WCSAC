@@ -29,10 +29,10 @@ FIGURE_FORMAT = 'png'
 sns.set_style("whitegrid")
 plt.rcParams.update({
     'figure.dpi': FIGURE_DPI,
-    'font.size': 11,
+    'font.size': 12,
     'font.family': 'serif',
-    'axes.labelsize': 12,
-    'axes.titlesize': 13,
+    'axes.labelsize': 13,
+    'axes.titlesize': 14,
     'xtick.labelsize': 10,
     'ytick.labelsize': 10,
     'legend.fontsize': 10,

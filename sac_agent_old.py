@@ -1,8 +1,6 @@
 """
 SAC Implementation for Multi-Slice Resource Allocation - Implements Algorithm 2
 Soft Actor-Critic with constrained action space using softmax parameterization
-
-UPDATED: Added proper entropy regularization and automatic temperature tuning
 """
 
 import numpy as np
@@ -86,23 +84,6 @@ class Actor(nn.Module):
         action = self.capacity * F.softmax(z, dim=-1)
         
         return action
-    
-    def forward_with_logits(self, state):
-        """
-        Forward pass returning both action and logits.
-        Used for entropy computation.
-        
-        Returns:
-            action: [a_1, ..., a_K] where Σa_k = C
-            logits: [z_1, ..., z_K] raw logits before softmax
-        """
-        x = self.shared(state)
-        z = self.logits(x)  # Logits ∈ R^K
-        
-        # Apply softmax and scale by capacity
-        action = self.capacity * F.softmax(z, dim=-1)
-        
-        return action, z
     
     def sample_action(self, state):
         """Sample action for training (adds exploration noise)"""
@@ -232,7 +213,7 @@ class SAC:
         self.critic1_optimizer = optim.Adam(self.critic1.parameters(), lr=lr_critic)
         self.critic2_optimizer = optim.Adam(self.critic2.parameters(), lr=lr_critic)
         
-        # Temperature (entropy regularization) - NOW PROPERLY USED
+        # Temperature (entropy regularization)
         self.log_alpha = torch.tensor(np.log(alpha), dtype=torch.float32,
                                      requires_grad=True, device=self.device)
         self.alpha_optimizer = optim.Adam([self.log_alpha], lr=lr_alpha)
@@ -342,57 +323,30 @@ class SAC:
         critic2_loss.backward()
         self.critic2_optimizer.step()
         
-        # ============ Update Actor (WITH ENTROPY) ============
-        # Get new actions AND logits for entropy computation
-        new_actor_output_full = self.actor.forward_with_logits(states)
+        # ============ Update Actor ============
+        # Sample new actions from current policy
+        new_actor_output = self.actor(states)  # Shape: (batch, K) or (batch, K+1)
         
         if self.use_efficient_allocation:
-            # Unpack: (action, logits) where action is (batch, K+1)
-            new_actor_output, logits = new_actor_output_full
             # Extract first K actions for critics
             new_actions = new_actor_output[:, :self.num_slices]
         else:
-            # Unpack: (action, logits) where action is (batch, K)
-            new_actions, logits = new_actor_output_full
+            # Standard mode
+            new_actions = new_actor_output
         
         # Compute Q-values
         q1_new = self.critic1(states, new_actions)
         q2_new = self.critic2(states, new_actions)
         q_new = torch.min(q1_new, q2_new)
         
-        # Compute entropy of softmax distribution
-        # H(π) = -Σ p_i log(p_i) where p = softmax(z)
-        probs = F.softmax(logits, dim=-1)
-        log_probs = F.log_softmax(logits, dim=-1)
-        entropy = -(probs * log_probs).sum(dim=-1, keepdim=True)
-        
-        # Actor loss: maximize Q + α·H(π)
-        # Equivalently: minimize -(Q + α·H)
-        actor_loss = -(q_new + self.alpha * entropy).mean()
+        # Actor loss: maximize Q
+        # (negative because we're minimizing)
+        actor_loss = -q_new.mean()
         
         # Update actor
         self.actor_optimizer.zero_grad()
         actor_loss.backward()
         self.actor_optimizer.step()
-        
-        # ============ Update Temperature (Alpha) ============
-        # Automatic temperature tuning
-        with torch.no_grad():
-            # Recompute entropy for alpha update (detach from actor graph)
-            if self.use_efficient_allocation:
-                _, logits_detached = self.actor.forward_with_logits(states)
-            else:
-                _, logits_detached = self.actor.forward_with_logits(states)
-            
-            probs_detached = F.softmax(logits_detached, dim=-1)
-            log_probs_detached = F.log_softmax(logits_detached, dim=-1)
-            entropy_detached = -(probs_detached * log_probs_detached).sum(dim=-1, keepdim=True)
-        
-        alpha_loss = -(self.log_alpha * (entropy_detached + self.target_entropy)).mean()
-        
-        self.alpha_optimizer.zero_grad()
-        alpha_loss.backward()
-        self.alpha_optimizer.step()
         
         # ============ Soft Update Targets ============
         self._soft_update(self.critic1, self.critic1_target)
@@ -405,9 +359,6 @@ class SAC:
             'critic2_loss': critic2_loss.item(),
             'actor_loss': actor_loss.item(),
             'alpha': self.alpha,
-            'alpha_loss': alpha_loss.item(),
-            'entropy': entropy.mean().item(),
-            'target_entropy': self.target_entropy,
             'q_value': q_new.mean().item(),
         }
     

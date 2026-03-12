@@ -412,6 +412,62 @@ class NetworkEnvironment:
         state = self._build_state(beta, cdfs, transport_utilization, transport_delays)
         return state
     
+    def _allocate_resources(self, action: np.ndarray) -> np.ndarray:
+        """
+        Allocate discrete resources ensuring sum exactly equals capacity C.
+        
+        Uses Floor + Remainder Distribution:
+        1. Floor all continuous actions
+        2. Calculate remaining capacity  
+        3. Distribute remainder to slices with largest fractional parts
+        
+        Guarantees: sum(allocated) = C for any K
+        
+        Args:
+            action: Continuous action [a_1, ..., a_K] where sum(action) ≈ C
+                    (from softmax: action = C * softmax(z))
+        
+        Returns:
+            allocated: Integer allocation [r_1, ..., r_K] where sum = C exactly
+        
+        Example:
+            action = [4.7, 3.3]  # K=2, C=8
+            floor = [4, 3]       # sum = 7
+            remainder = 1
+            fractional = [0.7, 0.3]  # Slice 0 has larger fractional
+            → Give remainder to slice 0
+            → result = [5, 3] (sum = 8) ✓
+        """
+        # Step 1: Floor all allocations
+        allocated = np.floor(action).astype(int)
+        
+        # Step 2: Calculate remainder
+        remainder = self.C - np.sum(allocated)
+        
+        # Sanity check
+        assert 0 <= remainder <= self.K, \
+            f"Invalid remainder {remainder}. Action sum: {np.sum(action):.6f}, C: {self.C}"
+        
+        # Step 3: Distribute remainder to slices with largest fractional parts
+        if remainder > 0:
+            # Calculate fractional parts
+            fractional = action - allocated
+            
+            # Get indices sorted by fractional part (descending order)
+            indices_sorted = np.argsort(-fractional)
+            
+            # Give 1 RB to the top 'remainder' slices
+            for i in range(remainder):
+                allocated[indices_sorted[i]] += 1
+        
+        # Step 4: Final verification
+        final_sum = np.sum(allocated)
+        assert final_sum == self.C, \
+            f"Allocation failed! Sum={final_sum}, C={self.C}, allocated={allocated}"
+        
+        return allocated
+
+
     def step(self, action: np.ndarray) -> Tuple[np.ndarray, float, bool, dict]:
         """
         Algorithm 1: Step(a) function
@@ -444,8 +500,11 @@ class NetworkEnvironment:
             self.X[k].extend(x_k)
         
         # Step 2: Compute QoS using rounded actions (MULTI-METRIC SUPPORT)
-        r_used = np.round(action).astype(int)
+        #r_used = np.round(action).astype(int)
         
+        # Step 2: Compute QoS using floor+remainder allocation (MULTI-METRIC SUPPORT)
+        r_used = self._allocate_resources(action)
+
         for k in range(self.K):
             #rbs = int(np.clip(r_used[k], 1, self.C))
             rbs = int(np.clip(r_used[k], 1, 8)) #Jubran

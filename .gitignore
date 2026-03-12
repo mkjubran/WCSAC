@@ -17,8 +17,10 @@ venv/
 data/
 datasets/
 runs/
+runsNoEntropy/
 results/
 configs/
+configsNoEnropty/
 checkpoints/
 
 # Logs
