@@ -29,10 +29,10 @@ FIGURE_FORMAT = 'png'
 sns.set_style("whitegrid")
 plt.rcParams.update({
     'figure.dpi': FIGURE_DPI,
-    'font.size': 11,
+    'font.size': 12,
     'font.family': 'serif',
-    'axes.labelsize': 12,
-    'axes.titlesize': 13,
+    'axes.labelsize': 13,
+    'axes.titlesize': 14,
     'xtick.labelsize': 10,
     'ytick.labelsize': 10,
     'legend.fontsize': 10,
@@ -942,49 +942,6 @@ def fig5_dynamic_scenarios(exps_by_cat, output_dir):
         print(f"  ✓ fig5d2_continuous_allocation_ep80.{FIGURE_FORMAT}")
     
     # ========================================================================
-    # NEW: Continuous beta (QoS violation ratio) for episode 80
-    # ========================================================================
-    print(f"\n  [DEBUG] Checking for ep80_beta...")
-    print(f"  [DEBUG] Keys in data: {list(data.keys())[:10]}...")  # Show first 10 keys
-    print(f"  [DEBUG] 'ep80_beta' in data: {'ep80_beta' in data}")
-    
-    if 'ep80_beta' in data:
-        print(f"  [DEBUG] Found ep80_beta! Generating figure...")
-        fig, ax = plt.subplots(figsize=(14, 6))
-        
-        # Get data
-        beta_values = data['ep80_beta']['values']
-        
-        # Create DTI indices (0 to len-1)
-        dtis = np.arange(len(beta_values))
-        
-        # Plot continuous beta curve
-        ax.plot(dtis, beta_values, color='red', alpha=0.8, linewidth=2.0, 
-               label='β (QoS Violation Ratio)')
-        
-        ax.set_xlabel('DTI (within Episode 80)', fontsize=12)
-        ax.set_ylabel(LABEL_BETA, fontsize=12)
-        ax.set_title('QoS Violation Ratio Over Time (Episode 80)', fontsize=14, fontweight='bold')
-        ax.legend(loc='best', framealpha=0.9)
-        ax.grid(True, alpha=0.3)
-        ax.set_ylim([0, 1.05])  # Beta is between 0 and 1
-        
-        # Add vertical lines at period boundaries (every 200 DTIs)
-        for period in range(1, 10):
-            ax.axvline(x=period * 200, color='gray', linestyle=':', alpha=0.5, linewidth=1)
-        
-        # Add horizontal line at beta=0 for reference
-        ax.axhline(y=0, color='green', linestyle='--', alpha=0.3, linewidth=1, label='Perfect QoS (β=0)')
-        
-        plt.tight_layout()
-        plt.savefig(os.path.join(output_dir, f'fig5d3_continuous_beta_ep80.{FIGURE_FORMAT}'), 
-                    dpi=FIGURE_DPI, bbox_inches='tight')
-        plt.close()
-        print(f"  ✓ fig5d3_continuous_beta_ep80.{FIGURE_FORMAT}")
-    else:
-        print(f"  ⚠️  Skipping fig5d3_continuous_beta_ep80 - 'ep80_beta' not in data")
-    
-    # ========================================================================
     # Figure 5e: Active profiles for EPISODE 160
     # ========================================================================
     if 'ep160_action_slice0' in data:
@@ -1136,48 +1093,6 @@ def fig5_dynamic_scenarios(exps_by_cat, output_dir):
                     dpi=FIGURE_DPI, bbox_inches='tight')
         plt.close()
         print(f"  ✓ fig5f2_continuous_allocation_ep160.{FIGURE_FORMAT}")
-    
-    # ========================================================================
-    # NEW: Continuous beta (QoS violation ratio) for episode 160
-    # ========================================================================
-    print(f"\n  [DEBUG] Checking for ep160_beta...")
-    print(f"  [DEBUG] 'ep160_beta' in data: {'ep160_beta' in data}")
-    
-    if 'ep160_beta' in data:
-        print(f"  [DEBUG] Found ep160_beta! Generating figure...")
-        fig, ax = plt.subplots(figsize=(14, 6))
-        
-        # Get data
-        beta_values = data['ep160_beta']['values']
-        
-        # Create DTI indices (0 to len-1)
-        dtis = np.arange(len(beta_values))
-        
-        # Plot continuous beta curve
-        ax.plot(dtis, beta_values, color='red', alpha=0.8, linewidth=2.0, 
-               label='β (QoS Violation Ratio)')
-        
-        ax.set_xlabel('DTI (within Episode 160)', fontsize=12)
-        ax.set_ylabel(LABEL_BETA, fontsize=12)
-        ax.set_title('QoS Violation Ratio Over Time (Episode 160)', fontsize=14, fontweight='bold')
-        ax.legend(loc='best', framealpha=0.9)
-        ax.grid(True, alpha=0.3)
-        ax.set_ylim([0, 1.05])  # Beta is between 0 and 1
-        
-        # Add vertical lines at period boundaries (every 200 DTIs)
-        for period in range(1, 10):
-            ax.axvline(x=period * 200, color='gray', linestyle=':', alpha=0.5, linewidth=1)
-        
-        # Add horizontal line at beta=0 for reference
-        ax.axhline(y=0, color='green', linestyle='--', alpha=0.3, linewidth=1, label='Perfect QoS (β=0)')
-        
-        plt.tight_layout()
-        plt.savefig(os.path.join(output_dir, f'fig5f3_continuous_beta_ep160.{FIGURE_FORMAT}'), 
-                    dpi=FIGURE_DPI, bbox_inches='tight')
-        plt.close()
-        print(f"  ✓ fig5f3_continuous_beta_ep160.{FIGURE_FORMAT}")
-    else:
-        print(f"  ⚠️  Skipping fig5f3_continuous_beta_ep160 - 'ep160_beta' not in data")
 
 
 def fig_actor_loss_comparison(experiments, output_dir):

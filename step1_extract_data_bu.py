@@ -78,12 +78,10 @@ def extract_essential_metrics(tb_data):
         'episode_80/action_slice1': 'ep80_action_slice1',
         'episode_80/active_profile_slice0': 'ep80_active_profile_slice0',
         'episode_80/active_profile_slice1': 'ep80_active_profile_slice1',
-        'episode_80/beta': 'ep80_beta',
         'episode_160/action_slice0': 'ep160_action_slice0',
         'episode_160/action_slice1': 'ep160_action_slice1',
         'episode_160/active_profile_slice0': 'ep160_active_profile_slice0',
         'episode_160/active_profile_slice1': 'ep160_active_profile_slice1',
-        'episode_160/beta': 'ep160_beta',
     }
     
     # Optional metrics (try multiple possible tags)
