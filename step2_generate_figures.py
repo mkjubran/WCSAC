@@ -2093,6 +2093,186 @@ def generate_per_slice_beta_table(experiments, output_dir):
     print(f"  ✓ table_per_slice_beta.tex")
  
 
+def generate_ablation_table(experiments, output_dir):
+    """
+    Generate LaTeX table for ablation study.
+    
+    Format:
+    - Rows: Scenarios with multirow for Global/Uniform
+    - Columns: Global β, β₀, β₁, JFI
+    - Global reward: Only Global β available (rest N/A)
+    - Uniform reward: All metrics available
+    """
+    print("\n[Table] Ablation Study: Global vs Uniform Reward...")
+    
+    # Find all heterogeneous experiments
+    hetero_exps = [e for e in experiments if e['category'] == 'static_heterogeneous']
+    
+    if not hetero_exps:
+        print("  ⚠️  No heterogeneous experiments found")
+        return
+    
+    # Group by scenario
+    scenarios = {}
+    
+    for exp in hetero_exps:
+        scenario_key = exp['scenario_str']
+        
+        if scenario_key not in scenarios:
+            scenarios[scenario_key] = {'global': None, 'uniform': None}
+        
+        # Determine type based on per-slice data
+        has_per_slice = ('dti_beta_slice0' in exp['data'] and 
+                        'dti_beta_slice1' in exp['data'])
+        
+        if has_per_slice:
+            scenarios[scenario_key]['uniform'] = exp
+        else:
+            scenarios[scenario_key]['global'] = exp
+    
+    # Filter to complete scenarios (both formulations)
+    complete_scenarios = {k: v for k, v in scenarios.items() 
+                         if v['global'] is not None and v['uniform'] is not None}
+    
+    if not complete_scenarios:
+        print("  ⚠️  No scenarios with both Global and Uniform formulations")
+        return
+    
+    print(f"  Found {len(complete_scenarios)} complete scenarios")
+    
+    # Define scenario order and display names
+    scenario_order = [
+        'Low - High',
+        'Extremely_Low - Extremely_High',
+        'Medium - High'
+    ]
+    
+    scenario_display = {
+        'Low - High': 'Low -- High',
+        'Extremely_Low - Extremely_High': 'Ext.\\ Low -- Ext.\\ High',
+        'Medium - High': 'Medium -- High'
+    }
+    
+    # Build table rows
+    import numpy as np
+    
+    rows = []
+    
+    for scenario_key in scenario_order:
+        if scenario_key not in complete_scenarios:
+            continue
+        
+        display_name = scenario_display.get(scenario_key, scenario_key)
+        
+        # Get experiments
+        global_exp = complete_scenarios[scenario_key]['global']
+        uniform_exp = complete_scenarios[scenario_key]['uniform']
+        
+        # --- Global Reward Row ---
+        global_stats = global_exp['statistics'].get('beta', {})
+        global_mean = global_stats.get('last_100_mean', global_stats.get('mean'))
+        global_std = global_stats.get('last_100_std', global_stats.get('std'))
+        
+        if global_mean is not None and global_std is not None:
+            global_beta_str = f"{global_mean:.4f} $\\pm$ {global_std:.4f}"
+        else:
+            global_beta_str = "---"
+        
+        # Global reward doesn't have per-slice data
+        global_row = {
+            'scenario': display_name,
+            'reward': 'Global',
+            'global_beta': global_beta_str,
+            'beta0': '---',
+            'beta1': '---',
+            'jfi': '---'
+        }
+        rows.append(global_row)
+        
+        # --- Uniform Reward Row ---
+        uniform_stats = uniform_exp['statistics'].get('beta', {})
+        uniform_mean = uniform_stats.get('last_100_mean', uniform_stats.get('mean'))
+        uniform_std = uniform_stats.get('last_100_std', uniform_stats.get('std'))
+        
+        if uniform_mean is not None and uniform_std is not None:
+            uniform_beta_str = f"{uniform_mean:.4f} $\\pm$ {uniform_std:.4f}"
+        else:
+            uniform_beta_str = "---"
+        
+        # Compute per-slice stats
+        beta0_values = uniform_exp['data']['dti_beta_slice0']['values']
+        beta1_values = uniform_exp['data']['dti_beta_slice1']['values']
+        
+        # Use final 20% (last 100 of 500 episodes ≈ last 20%)
+        cutoff = int(len(beta0_values) * 0.8)
+        final_beta0 = np.array(beta0_values[cutoff:])
+        final_beta1 = np.array(beta1_values[cutoff:])
+        
+        beta0_mean = float(np.mean(final_beta0))
+        beta0_std = float(np.std(final_beta0))
+        beta1_mean = float(np.mean(final_beta1))
+        beta1_std = float(np.std(final_beta1))
+        
+        beta0_str = f"{beta0_mean:.4f} $\\pm$ {beta0_std:.4f}"
+        beta1_str = f"{beta1_mean:.4f} $\\pm$ {beta1_std:.4f}"
+        
+        # Compute JFI
+        s0 = 1.0 - beta0_mean
+        s1 = 1.0 - beta1_mean
+        jfi = (s0 + s1)**2 / (2 * (s0**2 + s1**2)) if (s0**2 + s1**2) > 0 else 0.0
+        jfi_str = f"{jfi:.4f}"
+        
+        uniform_row = {
+            'scenario': '',  # Empty for multirow
+            'reward': 'Uniform',
+            'global_beta': uniform_beta_str,
+            'beta0': beta0_str,
+            'beta1': beta1_str,
+            'jfi': jfi_str
+        }
+        rows.append(uniform_row)
+    
+    # Generate LaTeX
+    latex = r"""\begin{table}[!t]
+\caption{Ablation Results: Global vs.\ Uniform Weighted Reward
+(Mean $\pm$ Std, Last 100 of 500 Episodes, 5 Seeds)}
+\label{tab:ablation_results}
+\centering
+\begin{tabular}{@{}llcccc@{}}
+\toprule
+\textbf{Scenario} & \textbf{Reward} & \textbf{Global $\beta$}
+  & \textbf{$\beta_0$} & \textbf{$\beta_1$} & \textbf{JFI} \\
+\midrule
+"""
+    
+    # Add rows
+    for i, row in enumerate(rows):
+        if row['scenario']:  # First row of scenario (Global)
+            # Use multirow
+            latex += f"\\multirow{{2}}{{*}}{{{row['scenario']}}}\n"
+            latex += f"  & {row['reward']}  & {row['global_beta']} & {row['beta0']} & {row['beta1']} & {row['jfi']} \\\\\n"
+        else:  # Second row (Uniform)
+            latex += f"  & {row['reward']}  & {row['global_beta']} & {row['beta0']} & {row['beta1']} & {row['jfi']} \\\\\n"
+            
+            # Add midrule after each scenario (except last)
+            if i < len(rows) - 1:
+                latex += "\\midrule\n"
+    
+    latex += r"""\bottomrule
+\end{tabular}
+\end{table}
+"""
+    
+    # Save
+    output_path = os.path.join(output_dir, 'table_ablation_results.tex')
+    with open(output_path, 'w') as f:
+        f.write(latex)
+    
+    print(f"  ✓ table_ablation_results.tex")
+    print(f"    Scenarios: {len(complete_scenarios)}")
+ 
+ 
+
 # ============================================================================
 # MAIN
 # ============================================================================
@@ -2184,7 +2364,7 @@ def main():
     generate_summary_table(experiments, args.output_dir)
 
     generate_per_slice_beta_table(experiments, args.output_dir)
-
+    generate_ablation_table(experiments, args.output_dir)
     
     # Generate table
     print("\n" + "="*80)
