@@ -253,13 +253,13 @@ UNUSED_CAPACITY_REWARD_WEIGHT = 0.1
 # TRAFFIC GENERATION
 # ============================================================================
 
-TRAFFIC_PROFILES = ['dynamic', 'dynamic']
+TRAFFIC_PROFILES = ['medium', 'high']
 #TRAFFIC_PROFILES = ['medium', 'high']
 # Options: 'uniform', 'extremely_low', 'low', 'medium', 'high', 'extremely_high', 'dynamic', 'external'
 
 # Dynamic Profile Configuration
 DYNAMIC_PROFILE_CONFIG = {
-    'profile_set': ['low', 'medium', 'high'],
+    'profile_set': ['extremely_low','low', 'medium', 'high','extremely_high'],
     'change_period': 200
 }
 
@@ -268,6 +268,29 @@ TRAFFIC_VALUES = list(range(5, 85, 5))
 
 # Episode Length
 T_MAX = 2000
+
+# ============================================================================
+# PER-SLICE WEIGHTED REWARD (NEW)
+# ============================================================================
+ 
+# Per-Slice Beta Weighting
+# - If use_slice_weighted_reward = False: Uses global β (traffic-weighted across all slices)
+# - If use_slice_weighted_reward = True: Uses weighted sum β = Σ(w_k × β_k)
+#
+# Example weighting schemes:
+#   [0.33, 0.33, 0.33] → Equal importance (max-min fairness)
+#   [0.5, 0.3, 0.2]    → Prioritize VoIP > CBR > Video
+#   [0.6, 0.2, 0.2]    → Heavily prioritize VoIP
+ 
+SLICE_WEIGHTS = [0.5, 0.5]  # Weights for each slice (must sum to ~1, auto-normalized)
+USE_SLICE_WEIGHTED_REWARD = True     # Enable per-slice weighted mode
+ 
+# Notes:
+# - Weights are automatically normalized to sum to 1.0
+# - Each weight represents the importance of that slice in the reward
+# - Higher weight = violations in that slice are penalized more
+# - Set USE_SLICE_WEIGHTED_REWARD = False to use original global β (baseline)
+ 
 
 # ============================================================================
 # ALGORITHM 2: SAC TRAINING PARAMETERS
@@ -340,6 +363,10 @@ def get_config():
         'dynamic_profile_config': DYNAMIC_PROFILE_CONFIG,
         'max_dtis': T_MAX,
         
+        # Per-slice weighted reward (NEW)
+        'slice_weights': SLICE_WEIGHTS,
+        'use_slice_weighted_reward': USE_SLICE_WEIGHTED_REWARD,
+
         # Efficient allocation
         'use_efficient_allocation': USE_EFFICIENT_ALLOCATION,
         'unused_capacity_reward_weight': UNUSED_CAPACITY_REWARD_WEIGHT,
@@ -421,6 +448,20 @@ def print_config():
     print(f"  QoS table files:      {QOS_TABLE_FILES}")
     print(f"  T_max (max DTIs):     {T_MAX}")
     
+    print("\n[PER-SLICE WEIGHTED REWARD]")
+    print(f"  Enabled:              {USE_SLICE_WEIGHTED_REWARD}")
+    print(f"  Slice weights:        {SLICE_WEIGHTS}")
+
+    # Build reward formula dynamically based on K
+    if USE_SLICE_WEIGHTED_REWARD:
+        formula_parts = []
+        for i in range(K):
+            formula_parts.append(f"{SLICE_WEIGHTS[i]:.2f}×β{i}")
+        formula = " + ".join(formula_parts)
+        print(f"  → Reward formula:     β = {formula}")
+    else:
+        print(f"  → Using global β (traffic-weighted)")
+
     print("\n[RESOURCE ALLOCATION MODE]")
     if USE_EFFICIENT_ALLOCATION:
         print(f"  Mode:                 EFFICIENT (K+1 actions)")

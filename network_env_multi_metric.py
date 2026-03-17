@@ -12,6 +12,7 @@ from typing import List, Tuple, Dict
 from traffic_generation import TrafficGenerator
 import pdb
 
+
 class NetworkEnvironment:
     """
     Multi-Slice Network Resource Allocation Environment (Algorithm 1).
@@ -51,6 +52,8 @@ class NetworkEnvironment:
         transport_delay_weights: List[float] = None,  # NEW: Reward weights for delays
         service_time_distribution: str = "deterministic",  # NEW: Service time distribution
         mg1_stability_threshold: float = 0.999,  # NEW: Stability threshold
+        slice_weights: List[float] = None,  # NEW: Weights for per-slice beta computation
+        use_slice_weighted_reward: bool = False,  # NEW: Use weighted sum of per-slice betas
     ):
         """
         Args:
@@ -131,6 +134,18 @@ class NetworkEnvironment:
             
             # Validate transport configuration
             self._validate_transport_config()
+        
+        # Per-slice weighted reward configuration
+        self.use_slice_weighted_reward = use_slice_weighted_reward
+        if slice_weights is None:
+            # Default: uniform weights (each slice equally important)
+            self.slice_weights = [1.0 / K] * K
+        else:
+            # Normalize weights to sum to 1
+            assert len(slice_weights) == K, f"slice_weights must have length K={K}"
+            total_weight = sum(slice_weights)
+            assert total_weight > 0, "slice_weights must sum to positive value"
+            self.slice_weights = [w / total_weight for w in slice_weights]
         
         # Thresholds
         if thresholds is None:
@@ -412,62 +427,6 @@ class NetworkEnvironment:
         state = self._build_state(beta, cdfs, transport_utilization, transport_delays)
         return state
     
-    def _allocate_resources(self, action: np.ndarray) -> np.ndarray:
-        """
-        Allocate discrete resources ensuring sum exactly equals capacity C.
-        
-        Uses Floor + Remainder Distribution:
-        1. Floor all continuous actions
-        2. Calculate remaining capacity  
-        3. Distribute remainder to slices with largest fractional parts
-        
-        Guarantees: sum(allocated) = C for any K
-        
-        Args:
-            action: Continuous action [a_1, ..., a_K] where sum(action) ≈ C
-                    (from softmax: action = C * softmax(z))
-        
-        Returns:
-            allocated: Integer allocation [r_1, ..., r_K] where sum = C exactly
-        
-        Example:
-            action = [4.7, 3.3]  # K=2, C=8
-            floor = [4, 3]       # sum = 7
-            remainder = 1
-            fractional = [0.7, 0.3]  # Slice 0 has larger fractional
-            → Give remainder to slice 0
-            → result = [5, 3] (sum = 8) ✓
-        """
-        # Step 1: Floor all allocations
-        allocated = np.floor(action).astype(int)
-        
-        # Step 2: Calculate remainder
-        remainder = self.C - np.sum(allocated)
-        
-        # Sanity check
-        assert 0 <= remainder <= self.K, \
-            f"Invalid remainder {remainder}. Action sum: {np.sum(action):.6f}, C: {self.C}"
-        
-        # Step 3: Distribute remainder to slices with largest fractional parts
-        if remainder > 0:
-            # Calculate fractional parts
-            fractional = action - allocated
-            
-            # Get indices sorted by fractional part (descending order)
-            indices_sorted = np.argsort(-fractional)
-            
-            # Give 1 RB to the top 'remainder' slices
-            for i in range(remainder):
-                allocated[indices_sorted[i]] += 1
-        
-        # Step 4: Final verification
-        final_sum = np.sum(allocated)
-        assert final_sum == self.C, \
-            f"Allocation failed! Sum={final_sum}, C={self.C}, allocated={allocated}"
-        
-        return allocated
-
-
     def step(self, action: np.ndarray) -> Tuple[np.ndarray, float, bool, dict]:
         """
         Algorithm 1: Step(a) function
@@ -500,14 +459,10 @@ class NetworkEnvironment:
             self.X[k].extend(x_k)
         
         # Step 2: Compute QoS using rounded actions (MULTI-METRIC SUPPORT)
-        #r_used = np.round(action).astype(int)
+        r_used = np.round(action).astype(int)
         
-        # Step 2: Compute QoS using floor+remainder allocation (MULTI-METRIC SUPPORT)
-        r_used = self._allocate_resources(action)
-
         for k in range(self.K):
-            #rbs = int(np.clip(r_used[k], 1, self.C))
-            rbs = int(np.clip(r_used[k], 1, 8)) #Jubran
+            rbs = int(np.clip(r_used[k], 1, self.C))
             q_k_samples = []  # List of dicts, one per TTI
             
             # Get last N traffic values for this DTI
@@ -625,16 +580,16 @@ class NetworkEnvironment:
         used_capacity = np.sum(action)
         unused_capacity = self.C - used_capacity
         
-        # Base reward: -beta + lambda * (unused / C)
-        reward = -beta #+ self.lambda_reward * (unused_capacity / self.C)
+        # Base reward: -beta (multi-metric RAN QoS penalty)
+        reward = -beta
         
-        # In efficient allocation mode, add bonus for saving resources
-        if self.use_efficient_allocation: #and self.unused_reward_weight > 0:
-            #pdb.set_trace()
-            efficiency_bonus = self.unused_reward_weight * (unused_capacity / self.C)
-            reward += efficiency_bonus
-            #print(f"beta={beta}, reward={reward}, unused_capacity={unused_capacity}, efficiency_bonus={efficiency_bonus}")
-
+        # In efficient allocation mode, add bonus/penalty for resource usage
+        # Positive weight: rewards saving resources (efficiency)
+        # Negative weight: penalizes unused capacity (encourages full allocation)
+        if self.use_efficient_allocation:
+            efficiency_term = self.unused_reward_weight * (unused_capacity / self.C)
+            reward += efficiency_term
+        
         # Transport layer penalty (if enabled)
         if self.use_transport_layer:
             # Weighted delay penalty
@@ -643,7 +598,7 @@ class NetworkEnvironment:
                 for k in range(self.K)
             )
             reward -= transport_penalty
-       
+        
         # Step 7: Build state and check if done
         state = self._build_state(beta, cdfs, transport_utilization, transport_delays)
         
@@ -664,8 +619,13 @@ class NetworkEnvironment:
             )
             active_profiles.append(active_profile)
         
+        # Compute per-slice betas for logging (always useful for analysis)
+        n_start, n_end = self._get_window_range()
+        per_slice_betas = self._compute_per_slice_betas(n_start, n_end)
+        
         info = {
             'beta': beta,
+            'beta_per_slice': per_slice_betas,  # NEW: Per-slice violation ratios
             'dti': self.current_dti,
             'r_used': r_used,
             'constraint_violated': False,
@@ -849,7 +809,11 @@ class NetworkEnvironment:
     
     def _compute_beta(self, n_start: int, n_end: int) -> float:
         """
-        Algorithm 1, Step 5: Compute global beta over window.
+        Algorithm 1, Step 5: Compute beta (QoS violation ratio).
+        
+        Supports two modes:
+        1. Global beta (default): Traffic-weighted violations across all slices
+        2. Per-slice weighted beta: Weighted sum of per-slice violation ratios
         
         Returns:
             β: Violation ratio [0, 1]
@@ -857,24 +821,76 @@ class NetworkEnvironment:
         if len(self.X[0]) == 0:
             return 0.0
         
-        violated_traffic = 0.0
-        total_traffic = 0.0
+        if self.use_slice_weighted_reward:
+            # Mode 2: Compute per-slice betas, then weighted sum
+            slice_betas = []
+            
+            for k in range(self.K):
+                violated_k = 0.0
+                total_k = 0.0
+                
+                # Traffic and satisfaction in window for this slice
+                traffic_window = self.X[k][n_start:n_end]
+                satisfaction_window = self.S[k][n_start:n_end]
+                
+                for i, traffic in enumerate(traffic_window):
+                    total_k += traffic
+                    if satisfaction_window[i] == 1:  # Violated
+                        violated_k += traffic
+                
+                # Per-slice violation ratio
+                beta_k = violated_k / total_k if total_k > 0 else 0.0
+                slice_betas.append(beta_k)
+            
+            # Weighted sum of per-slice betas
+            beta = sum(w_k * beta_k for w_k, beta_k in zip(self.slice_weights, slice_betas))
+        else:
+            # Mode 1: Global beta (original method)
+            violated_traffic = 0.0
+            total_traffic = 0.0
+            
+            for k in range(self.K):
+                # Traffic and satisfaction in window
+                traffic_window = self.X[k][n_start:n_end]
+                satisfaction_window = self.S[k][n_start:n_end]
+                
+                for i, traffic in enumerate(traffic_window):
+                    total_traffic += traffic
+                    if satisfaction_window[i] == 1:  # Violated
+                        violated_traffic += traffic
+            
+            if total_traffic == 0:
+                return 0.0
+            
+            beta = violated_traffic / total_traffic
+        
+        return beta
+    
+    def _compute_per_slice_betas(self, n_start: int, n_end: int) -> List[float]:
+        """
+        Compute per-slice violation ratios (for logging/debugging).
+        
+        Returns:
+            List of per-slice betas [β_0, β_1, ..., β_{K-1}]
+        """
+        slice_betas = []
         
         for k in range(self.K):
-            # Traffic and satisfaction in window
+            violated_k = 0.0
+            total_k = 0.0
+            
             traffic_window = self.X[k][n_start:n_end]
             satisfaction_window = self.S[k][n_start:n_end]
             
             for i, traffic in enumerate(traffic_window):
-                total_traffic += traffic
-                if satisfaction_window[i] == 1:  # Violated
-                    violated_traffic += traffic
+                total_k += traffic
+                if satisfaction_window[i] == 1:
+                    violated_k += traffic
+            
+            beta_k = violated_k / total_k if total_k > 0 else 0.0
+            slice_betas.append(beta_k)
         
-        if total_traffic == 0:
-            return 0.0
-        
-        beta = violated_traffic / total_traffic
-        return beta
+        return slice_betas
     
     def _build_state(self, beta: float, cdfs: List[np.ndarray], 
                      transport_utilization: float = None, 

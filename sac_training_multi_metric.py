@@ -87,6 +87,8 @@ def train_sac():
         transport_delay_weights=cfg.get('transport_delay_weights'),
         service_time_distribution=cfg.get('service_time_distribution', 'deterministic'),
         mg1_stability_threshold=cfg.get('mg1_stability_threshold', 0.999),
+        slice_weights=cfg.get('slice_weights', None),                    # ADD THIS
+        use_slice_weighted_reward=cfg.get('use_slice_weighted_reward', False)  # ADD THIS
     )
     
     # Print QoS mode
@@ -177,6 +179,9 @@ def train_sac():
             writer.add_scalar('dti/reward', reward, global_step)
             writer.add_scalar('dti/beta', info['beta'], global_step)
             
+            for k in range(cfg['K']):
+                writer.add_scalar(f'dti/beta_slice{k}', info['beta_per_slice'][k], global_step)
+
             # Log transport layer metrics (if enabled)
             if cfg.get('use_transport_layer', False) and 'transport_utilization' in info:
                 writer.add_scalar('dti/transport_utilization', info['transport_utilization'], global_step)
@@ -228,6 +233,10 @@ def train_sac():
                 writer.add_scalar(f'episode_{episode}/reward', reward, dti)
                 writer.add_scalar(f'episode_{episode}/beta', info['beta'], dti)
                 
+                # NEW: Log per-slice betas for this episode
+                for k in range(cfg['K']):
+                    writer.add_scalar(f'episode_{episode}/beta_slice{k}', info['beta_per_slice'][k], dti)
+
                 # Transport metrics for this episode
                 if cfg.get('use_transport_layer', False) and 'transport_utilization' in info:
                     writer.add_scalar(f'episode_{episode}/transport_utilization', info['transport_utilization'], dti)

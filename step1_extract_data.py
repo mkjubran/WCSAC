@@ -70,6 +70,8 @@ def extract_essential_metrics(tb_data):
         'episode/reward': 'episode_reward',
         'episode/avg_beta': 'episode_beta',
         'dti/beta': 'dti_beta',
+        'dti/beta_slice0': 'dti_beta_slice0',  # NEW: Per-slice beta
+        'dti/beta_slice1': 'dti_beta_slice1',  # NEW: Per-slice beta
         'dti/action_slice0': 'dti_action_slice0',
         'dti/action_slice1': 'dti_action_slice1',
         'dti/active_profile_slice0': 'dti_active_profile_slice0',
@@ -79,11 +81,15 @@ def extract_essential_metrics(tb_data):
         'episode_80/active_profile_slice0': 'ep80_active_profile_slice0',
         'episode_80/active_profile_slice1': 'ep80_active_profile_slice1',
         'episode_80/beta': 'ep80_beta',
+        'episode_80/beta_slice0': 'ep80_beta_slice0',  # NEW: Episode 80 per-slice
+        'episode_80/beta_slice1': 'ep80_beta_slice1',  # NEW: Episode 80 per-slice
         'episode_160/action_slice0': 'ep160_action_slice0',
         'episode_160/action_slice1': 'ep160_action_slice1',
         'episode_160/active_profile_slice0': 'ep160_active_profile_slice0',
         'episode_160/active_profile_slice1': 'ep160_active_profile_slice1',
         'episode_160/beta': 'ep160_beta',
+        'episode_160/beta_slice0': 'ep160_beta_slice0',  # NEW: Episode 160 per-slice
+        'episode_160/beta_slice1': 'ep160_beta_slice1',  # NEW: Episode 160 per-slice
     }
     
     # Optional metrics (try multiple possible tags)
