@@ -113,6 +113,54 @@ def load_baseline_results(baseline_dir, experiments):
     return baseline_data
 
 
+def compute_per_slice_stats(data_dict, metric_prefix='dti_beta_slice'):
+    """
+    Compute statistics for per-slice metrics.
+    
+    Args:
+        data_dict: Experiment data dictionary
+        metric_prefix: Prefix for the metric (e.g., 'dti_beta_slice')
+    
+    Returns:
+        dict: {slice_id: {mean, std, last_100_mean, last_100_std, ...}}
+    """
+    stats = {}
+    
+    # Find all slice metrics
+    slice_keys = [k for k in data_dict.keys() if k.startswith(metric_prefix)]
+    
+    for key in slice_keys:
+        # Extract slice number
+        slice_num = key.replace(metric_prefix, '')
+        
+        values = np.array(data_dict[key]['values'])
+        
+        if len(values) == 0:
+            continue
+        
+        slice_stats = {
+            'mean': float(np.mean(values)),
+            'std': float(np.std(values)),
+            'min': float(np.min(values)),
+            'max': float(np.max(values)),
+            'median': float(np.median(values)),
+            'count': len(values)
+        }
+        
+        # Last 100 values (or 20% of data for final performance)
+        window = min(100, int(len(values) * 0.2))
+        if len(values) >= window:
+            last_n = values[-window:]
+            slice_stats['last_100_mean'] = float(np.mean(last_n))
+            slice_stats['last_100_std'] = float(np.std(last_n))
+            slice_stats['last_100_min'] = float(np.min(last_n))
+            slice_stats['last_100_max'] = float(np.max(last_n))
+        
+        stats[slice_num] = slice_stats
+    
+    return stats
+ 
+
 def categorize_experiments(experiments):
     """Organize experiments by category."""
     categories = {
@@ -1244,6 +1292,320 @@ def fig_actor_loss_comparison(experiments, output_dir):
     plt.close()
     print(f"  ✓ fig_actor_loss_comparison.{FIGURE_FORMAT}")
 
+# ============================================================================
+# NEW FIGURE: Per-Slice Beta Training Evolution
+# ============================================================================
+
+def fig_per_slice_beta_training(experiments, output_dir):
+    """
+    Figure: Per-slice beta evolution during training.
+    Shows how each slice's QoS violations evolve compared to global beta.
+    """
+    print("\n[Figure] Per-Slice Beta Training...")
+    
+    # Find dynamic experiment WITH per-slice data
+    dynamic_exp = None
+    for exp in experiments:
+        if exp['category'] == 'dynamic':
+            # Check if this experiment has per-slice data
+            if 'dti_beta_slice0' in exp['data'] and 'dti_beta_slice1' in exp['data']:
+                dynamic_exp = exp
+                print(f"  Using experiment: {exp['run_name']}")
+                break
+    
+    if not dynamic_exp:
+        print("  ⚠️  No dynamic experiment with per-slice beta data found")
+        print("      Available dynamic experiments:")
+        for exp in experiments:
+            if exp['category'] == 'dynamic':
+                has_slice_data = 'dti_beta_slice0' in exp['data']
+                print(f"        - {exp['run_name']}: has_per_slice={has_slice_data}")
+        return
+    
+    data = dynamic_exp['data']
+    
+    fig, ax = plt.subplots(figsize=(12, 6))
+    
+    # Get data
+    steps = np.array(data['dti_beta']['steps'])
+    global_beta = np.array(data['dti_beta']['values'])
+    
+    # Plot global beta
+    ax.plot(steps, global_beta, 
+            label='Global β', 
+            color='black', 
+            linewidth=2.0, 
+            alpha=0.8)
+    
+    # Plot per-slice betas
+    colors = ['steelblue', 'coral']
+    slice_names = ['VoIP', 'CBR']
+    
+    for k in range(2):
+        key = f'dti_beta_slice{k}'
+        if key in data:
+            slice_beta = np.array(data[key]['values'])
+            ax.plot(steps, slice_beta, 
+                   label=f'Slice {k} β ({slice_names[k]})', 
+                   color=colors[k], 
+                   linewidth=1.5, 
+                   alpha=0.7,
+                   linestyle='--')
+    
+    ax.set_xlabel(LABEL_DTI, fontsize=12)
+    ax.set_ylabel(LABEL_BETA, fontsize=12)
+    ax.set_title('Per-Slice vs Global QoS Violations', fontsize=14, fontweight='bold')
+    ax.legend(loc='best', framealpha=0.9)
+    ax.grid(True, alpha=0.3)
+    ax.set_ylim([0, 1.05])
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, f'fig_per_slice_beta_training.{FIGURE_FORMAT}'), 
+                dpi=FIGURE_DPI, bbox_inches='tight')
+    plt.close()
+    print(f"  ✓ fig_per_slice_beta_training.{FIGURE_FORMAT}")
+ 
+# ============================================================================
+# NEW FIGURE: Fairness Evolution
+# ============================================================================
+ 
+def fig_fairness_evolution(experiments, output_dir):
+    """
+    Figure: Fairness ratio evolution (max β / min β).
+    Shows how fairly the agent treats different slices.
+    """
+    print("\n[Figure] Fairness Evolution...")
+    
+    # Find dynamic experiment WITH per-slice data
+    dynamic_exp = None
+    for exp in experiments:
+        if exp['category'] == 'dynamic':
+            if 'dti_beta_slice0' in exp['data'] and 'dti_beta_slice1' in exp['data']:
+                dynamic_exp = exp
+                print(f"  Using experiment: {exp['run_name']}")
+                break
+    
+    if not dynamic_exp:
+        print("  ⚠️  No dynamic experiment with per-slice beta data found")
+        return
+    
+    data = dynamic_exp['data']
+    
+    fig, ax = plt.subplots(figsize=(12, 6))
+    
+    # Get data
+    steps = np.array(data['dti_beta_slice0']['steps'])
+    beta0 = np.array(data['dti_beta_slice0']['values'])
+    beta1 = np.array(data['dti_beta_slice1']['values'])
+    
+    # Compute fairness ratio (avoid division by zero)
+    epsilon = 1e-6
+    fairness = np.maximum(beta0, beta1) / (np.minimum(beta0, beta1) + epsilon)
+    fairness = np.clip(fairness, 1.0, 10.0)  # Cap at 10 for readability
+    
+    # Plot fairness
+    ax.plot(steps, fairness, 
+           color='green', 
+           linewidth=2.0, 
+           alpha=0.8,
+           label='Fairness Ratio')
+    
+    # Reference line for perfect fairness
+    ax.axhline(y=1.0, 
+              color='red', 
+              linestyle='--', 
+              linewidth=1.5, 
+              alpha=0.5,
+              label='Perfect Fairness')
+    
+    ax.set_xlabel(LABEL_DTI, fontsize=12)
+    ax.set_ylabel('Fairness Ratio (max β / min β)', fontsize=12)
+    ax.set_title('Slice Fairness During Training', fontsize=14, fontweight='bold')
+    ax.legend(loc='best', framealpha=0.9)
+    ax.grid(True, alpha=0.3)
+    ax.set_ylim([0.5, 5.0])
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, f'fig_fairness_evolution.{FIGURE_FORMAT}'), 
+                dpi=FIGURE_DPI, bbox_inches='tight')
+    plt.close()
+    print(f"  ✓ fig_fairness_evolution.{FIGURE_FORMAT}")
+ 
+ 
+# ============================================================================
+# NEW FIGURE: Episode-Level Per-Slice Beta
+# ============================================================================
+ 
+def fig_episode_per_slice_beta(experiments, output_dir, episode=80):
+    """
+    Figure: Per-slice beta evolution within a specific episode.
+    Follows same style as fig5d3_continuous_beta_ep80.
+    
+    NOTE: Takes experiments list instead of data dict to find one with per-slice data
+    """
+    print(f"\n[Figure] Episode {episode} Per-Slice Beta...")
+    
+    # Find dynamic experiment WITH per-slice data for this episode
+    dynamic_exp = None
+    ep_key = f'ep{episode}_beta'
+    slice0_key = f'ep{episode}_beta_slice0'
+    slice1_key = f'ep{episode}_beta_slice1'
+    
+    for exp in experiments:
+        if exp['category'] == 'dynamic':
+            data = exp['data']
+            if ep_key in data and slice0_key in data and slice1_key in data:
+                dynamic_exp = exp
+                print(f"  Using experiment: {exp['run_name']}")
+                break
+    
+    if not dynamic_exp:
+        print(f"  ⚠️  No dynamic experiment with episode {episode} per-slice beta data found")
+        print(f"      Looking for keys: {ep_key}, {slice0_key}, {slice1_key}")
+        for exp in experiments:
+            if exp['category'] == 'dynamic':
+                has_ep = ep_key in exp['data']
+                has_slice0 = slice0_key in exp['data']
+                has_slice1 = slice1_key in exp['data']
+                print(f"        - {exp['run_name']}: ep={has_ep}, s0={has_slice0}, s1={has_slice1}")
+        return
+    
+    data = dynamic_exp['data']
+    
+    fig, ax = plt.subplots(figsize=(14, 6))
+    
+    # Get global beta
+    global_beta = np.array(data[ep_key]['values'])
+    slice0_beta = np.array(data[slice0_key]['values'])
+    slice1_beta = np.array(data[slice1_key]['values'])
+    dtis = np.arange(len(global_beta))
+    
+    # Plot all three
+    ax.plot(dtis, global_beta, 
+           label='Global β', 
+           color='black', 
+           linewidth=2.0, 
+           alpha=0.8)
+    
+    ax.plot(dtis, slice0_beta, 
+           label='Slice 0 β (VoIP)', 
+           color='steelblue', 
+           linewidth=1.5, 
+           alpha=0.7,
+           linestyle='--')
+    
+    ax.plot(dtis, slice1_beta, 
+           label='Slice 1 β (CBR)', 
+           color='coral', 
+           linewidth=1.5, 
+           alpha=0.7,
+           linestyle='--')
+    
+    ax.set_xlabel(f'DTI (within Episode {episode})', fontsize=12)
+    ax.set_ylabel(LABEL_BETA, fontsize=12)
+    ax.set_title(f'Per-Slice QoS Violations (Episode {episode})', 
+                fontsize=14, fontweight='bold')
+    ax.legend(loc='best', framealpha=0.9)
+    ax.grid(True, alpha=0.3)
+    ax.set_ylim([0, 1.05])
+    
+    # Add vertical lines at period boundaries (every 200 DTIs)
+    for period in range(1, 10):
+        ax.axvline(x=period * 200, 
+                  color='gray', 
+                  linestyle=':', 
+                  alpha=0.5, 
+                  linewidth=1)
+    
+    # Add horizontal line at beta=0 for reference
+    ax.axhline(y=0, color='green', linestyle='--', alpha=0.3, linewidth=1)
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, f'fig5_ep{episode}_per_slice_beta.{FIGURE_FORMAT}'), 
+                dpi=FIGURE_DPI, bbox_inches='tight')
+    plt.close()
+    print(f"  ✓ fig5_ep{episode}_per_slice_beta.{FIGURE_FORMAT}")
+ 
+ 
+# ============================================================================
+# NEW FIGURE: Slice Beta Box Plot Comparison
+# ============================================================================
+ 
+def fig_slice_beta_boxplot(experiments, output_dir):
+    """
+    Figure: Box plot comparing final per-slice beta distributions.
+    Shows the statistical distribution of violations per slice.
+    """
+    print("\n[Figure] Slice Beta Box Plot...")
+    
+    # Find dynamic experiment WITH per-slice data
+    dynamic_exp = None
+    for exp in experiments:
+        if exp['category'] == 'dynamic':
+            if 'dti_beta_slice0' in exp['data'] and 'dti_beta_slice1' in exp['data']:
+                dynamic_exp = exp
+                print(f"  Using experiment: {exp['run_name']}")
+                break
+    
+    if not dynamic_exp:
+        print("  ⚠️  No dynamic experiment with per-slice beta data found")
+        return
+    
+    data = dynamic_exp['data']
+    
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    # Get final 20% of training
+    beta0 = np.array(data['dti_beta_slice0']['values'])
+    beta1 = np.array(data['dti_beta_slice1']['values'])
+    
+    cutoff = int(len(beta0) * 0.8)
+    final_beta0 = beta0[cutoff:]
+    final_beta1 = beta1[cutoff:]
+    
+    # Create box plot
+    box_data = [final_beta0, final_beta1]
+    bp = ax.boxplot(box_data, 
+                    labels=['Slice 0 (VoIP)', 'Slice 1 (CBR)'],
+                    patch_artist=True,
+                    widths=0.6)
+    
+    # Color boxes
+    colors = ['lightblue', 'lightcoral']
+    for patch, color in zip(bp['boxes'], colors):
+        patch.set_facecolor(color)
+        patch.set_alpha(0.7)
+    
+    # Style medians
+    for median in bp['medians']:
+        median.set_color('red')
+        median.set_linewidth(2)
+    
+    ax.set_ylabel(LABEL_BETA, fontsize=12)
+    ax.set_title('Final Performance: Per-Slice QoS Distribution', 
+                fontsize=14, fontweight='bold')
+    ax.grid(True, alpha=0.3, axis='y')
+    ax.set_ylim([0, 1.0])
+    
+    # Add statistics text
+    stats_text = (
+        f"Slice 0: μ={final_beta0.mean():.3f}, σ={final_beta0.std():.3f}\n"
+        f"Slice 1: μ={final_beta1.mean():.3f}, σ={final_beta1.std():.3f}"
+    )
+    ax.text(0.02, 0.98, stats_text, 
+           transform=ax.transAxes,
+           verticalalignment='top',
+           bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5),
+           fontsize=10)
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, f'fig_slice_beta_boxplot.{FIGURE_FORMAT}'), 
+                dpi=FIGURE_DPI, bbox_inches='tight')
+    plt.close()
+    print(f"  ✓ fig_slice_beta_boxplot.{FIGURE_FORMAT}")
+ 
+ 
+
 def generate_latex_table_static_homogeneous(exps_by_cat, baseline_data, output_dir):
     """Generate LaTeX table for static homogeneous results (Figure 2 data)."""
     print("\n[Table] Static Homogeneous Results...")
@@ -1437,6 +1799,100 @@ def generate_summary_table(experiments, output_dir):
     print(f"  ✓ summary_table.tex")
 
 
+def generate_per_slice_beta_table(experiments, output_dir):
+    """Generate LaTeX table for per-slice beta analysis."""
+    print("\n[Table] Per-Slice Beta Performance...")
+    
+    # Find dynamic experiment WITH per-slice data
+    dynamic_exp = None
+    for exp in experiments:
+        if exp['category'] == 'dynamic':
+            if 'dti_beta_slice0' in exp['data'] and 'dti_beta_slice1' in exp['data']:
+                dynamic_exp = exp
+                print(f"  Using experiment: {exp['run_name']}")
+                break
+    
+    if not dynamic_exp:
+        print("  ⚠️  No dynamic experiment with per-slice beta data found")
+        return
+    
+    data = dynamic_exp['data']
+    
+    # Compute per-slice statistics
+    slice_stats = compute_per_slice_stats(data, 'dti_beta_slice')
+    
+    if not slice_stats:
+        print("  ⚠️  No per-slice beta data available")
+        return
+    
+    # Build table rows
+    rows = []
+    
+    # Global beta stats (from existing statistics)
+    global_stats = dynamic_exp['statistics'].get('beta')
+    if global_stats:
+        global_mean = global_stats.get('last_100_mean', global_stats.get('mean'))
+        global_std = global_stats.get('last_100_std', global_stats.get('std'))
+        global_str = f"{global_mean:.4f} $\\pm$ {global_std:.4f}" if global_mean and global_std else "N/A"
+    else:
+        global_str = "N/A"
+    
+    rows.append(('Global', global_str))
+    
+    # Per-slice stats
+    for slice_id in sorted(slice_stats.keys()):
+        stats = slice_stats[slice_id]
+        mean_val = stats.get('last_100_mean', stats.get('mean'))
+        std_val = stats.get('last_100_std', stats.get('std'))
+        
+        slice_str = f"{mean_val:.4f} $\\pm$ {std_val:.4f}" if mean_val is not None and std_val is not None else "N/A"
+        
+        # Determine slice name
+        if slice_id == '0':
+            slice_name = 'Slice 0 (VoIP)'
+        elif slice_id == '1':
+            slice_name = 'Slice 1 (CBR)'
+        else:
+            slice_name = f'Slice {slice_id}'
+        
+        rows.append((slice_name, slice_str))
+    
+    # Compute fairness metric (if both slices available)
+    if '0' in slice_stats and '1' in slice_stats:
+        beta0_mean = slice_stats['0'].get('last_100_mean')
+        beta1_mean = slice_stats['1'].get('last_100_mean')
+        
+        if beta0_mean is not None and beta1_mean is not None:
+            fairness = max(beta0_mean, beta1_mean) / (min(beta0_mean, beta1_mean) + 1e-6)
+            rows.append(('Fairness (max/min)', f"{fairness:.2f}"))
+    
+    # Generate LaTeX
+    latex = r"""\begin{table}[!t]
+\centering
+\caption{Per-Slice QoS Performance Under Dynamic Traffic (Final 20\% of Training)}
+\label{tab:per_slice_beta}
+\begin{tabular}{lc}
+\toprule
+\textbf{Metric} & \textbf{β (mean $\pm$ std)} \\
+\midrule
+"""
+    
+    for metric, value in rows:
+        latex += f"{metric} & {value} \\\\\n"
+    
+    latex += r"""\bottomrule
+\end{tabular}
+\end{table}
+"""
+    
+    # Save
+    output_path = os.path.join(output_dir, 'table_per_slice_beta.tex')
+    with open(output_path, 'w') as f:
+        f.write(latex)
+    
+    print(f"  ✓ table_per_slice_beta.tex")
+ 
+
 # ============================================================================
 # MAIN
 # ============================================================================
@@ -1497,7 +1953,20 @@ def main():
     fig4_allocation_patterns(experiments, args.output_dir)
     fig5_dynamic_scenarios(exps_by_cat, args.output_dir)
     fig_actor_loss_comparison(experiments, args.output_dir)
+
+    # Per-slice beta analysis (FIXED)
+    print("\n" + "="*80)
+    print("GENERATING PER-SLICE BETA FIGURES")
+    print("="*80)
     
+    fig_per_slice_beta_training(experiments, args.output_dir)
+    fig_fairness_evolution(experiments, args.output_dir)
+    fig_slice_beta_boxplot(experiments, args.output_dir)
+    
+    # Per-slice beta for episodes 80 and 160 (pass experiments, not data)
+    fig_episode_per_slice_beta(experiments, args.output_dir, episode=80)
+    fig_episode_per_slice_beta(experiments, args.output_dir, episode=160)
+
     # Generate tables
     print("\n" + "="*80)
     print("GENERATING TABLES")
@@ -1510,6 +1979,9 @@ def main():
         print("  ⚠️  No baseline data - tables will only include SAC results")
     
     generate_summary_table(experiments, args.output_dir)
+
+    generate_per_slice_beta_table(experiments, args.output_dir)
+
     
     # Generate table
     print("\n" + "="*80)
@@ -1540,7 +2012,16 @@ def main():
     print(f"    - fig5f_dynamic_allocation_periods_ep160.png (episode 160 periods)")
     print(f"  Table:")
     print(f"    - summary_table.tex")
-    print(f"\nTotal: 13 figures + 1 table")
+
+    print(f"  Per-Slice Beta Analysis:")
+    print(f"    - fig_per_slice_beta_training.png")
+    print(f"    - fig_fairness_evolution.png")
+    print(f"    - fig_slice_beta_boxplot.png")
+    print(f"    - fig5_ep80_per_slice_beta.png")
+    print(f"    - fig5_ep160_per_slice_beta.png")
+    print(f"  Per-Slice Table:")
+    print(f"    - table_per_slice_beta.tex")
+    print(f"\nTotal: 18 figures + 4 tables")
 
 
 if __name__ == "__main__":
