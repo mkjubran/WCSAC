@@ -1638,272 +1638,174 @@ def compute_jains_fairness_index(beta0, beta1):
     
     return jfi
  
- 
-def fig_ablation_reward_formulation(experiments, output_dir):
+def fig_ablation_reward_formulation_robust(experiments, output_dir):
     """
     Ablation study: Compare Global β reward vs Uniform weighted reward.
     
-    Shows grouped bar chart with:
-    - Global β (overall performance)
-    - β₀ (Slice 0 / VoIP violations)
-    - β₁ (Slice 1 / CBR violations)
-    - JFI (Jain's Fairness Index)
-    
-    Across heterogeneous scenarios for both reward formulations.
-    
-    Requirements:
-    - Experiments with use_slice_weighted_reward=False (Global β baseline)
-    - Experiments with use_slice_weighted_reward=True, weights=[0.5, 0.5] (Uniform)
-    - Same heterogeneous scenarios for both formulations
+    Shows grouped bar chart with detailed logging to debug issues.
+    More robust than the original version.
     """
     print("\n[Figure] Ablation Study: Reward Formulation Comparison...")
+    print("="*80)
     
-    # Target heterogeneous scenarios
-    target_scenarios = [
-        'Low - High',
-        'Extremely_Low - Extremely_High',
-        'Medium - High'
-    ]
+    # Find all heterogeneous experiments
+    hetero_exps = [e for e in experiments if e['category'] == 'static_heterogeneous']
     
-    # Organize experiments by reward type and scenario
-    global_reward_exps = {}
-    uniform_reward_exps = {}
+    print(f"\nFound {len(hetero_exps)} heterogeneous experiments:")
+    for exp in hetero_exps:
+        has_slice = 'dti_beta_slice0' in exp['data']
+        beta_stats = exp['statistics'].get('beta', {})
+        beta_val = beta_stats.get('last_100_mean', beta_stats.get('mean', 'N/A'))
+        print(f"  - {exp['scenario_str']}: per_slice={has_slice}, β={beta_val}")
     
-    for exp in experiments:
-        if exp['category'] != 'static_heterogeneous':
-            continue
+    # Group by scenario (use exact scenario string as key)
+    scenarios = {}
+    
+    for exp in hetero_exps:
+        scenario_key = exp['scenario_str']
         
-        scenario_str = exp['scenario_str']
+        if scenario_key not in scenarios:
+            scenarios[scenario_key] = {'global': None, 'uniform': None}
         
-        # Normalize scenario string for matching
-        scenario_normalized = scenario_str.replace('_', ' ').replace('-', ' ').strip()
-        
-        # Check if this is a target scenario
-        matched_scenario = None
-        for target in target_scenarios:
-            target_normalized = target.replace('_', ' ').replace('-', ' ').strip()
-            if target_normalized.lower() == scenario_normalized.lower():
-                matched_scenario = target
-                break
-        
-        if not matched_scenario:
-            continue
-        
-        # Determine reward type from run_name or config
-        # You'll need to identify which runs use which reward formulation
-        # Options:
-        # 1. Check run_name for patterns (e.g., 'global', 'uniform', 'weighted')
-        # 2. Check if per-slice data exists (uniform would have it)
-        # 3. Manual mapping based on known run names
-        
-        # For now, we'll use a heuristic:
-        # - If per-slice beta data exists, assume it's uniform weighted
-        # - Otherwise, assume it's global reward
-        
+        # Determine type based on per-slice data
         has_per_slice = ('dti_beta_slice0' in exp['data'] and 
                         'dti_beta_slice1' in exp['data'])
         
         if has_per_slice:
-            # Has per-slice data - could be uniform weighted
-            # But we need to distinguish from other weighted configs
-            # For now, assume runs with per-slice data are uniform
-            uniform_reward_exps[matched_scenario] = exp
+            scenarios[scenario_key]['uniform'] = exp
         else:
-            # No per-slice data - global reward baseline
-            global_reward_exps[matched_scenario] = exp
+            scenarios[scenario_key]['global'] = exp
     
-    # Check if we have both formulations for comparison
-    if not global_reward_exps and not uniform_reward_exps:
-        print("  ⚠️  No heterogeneous experiments found for ablation study")
-        print("      Need experiments with:")
-        print("        - Global β reward (use_slice_weighted_reward=False)")
-        print("        - Uniform weighted reward (use_slice_weighted_reward=True, weights=[0.5, 0.5])")
+    print(f"\nGrouped into {len(scenarios)} unique scenarios:")
+    for scenario_key, exps in scenarios.items():
+        has_global = exps['global'] is not None
+        has_uniform = exps['uniform'] is not None
+        print(f"  {scenario_key}: global={has_global}, uniform={has_uniform}")
+    
+    # Filter to scenarios with BOTH formulations
+    complete_scenarios = {k: v for k, v in scenarios.items() 
+                         if v['global'] is not None and v['uniform'] is not None}
+    
+    if not complete_scenarios:
+        print("\n⚠️  No scenarios with both Global and Uniform reward formulations!")
+        print("\nYou need to run experiments with:")
+        print("  1. use_slice_weighted_reward=False (Global)")
+        print("  2. use_slice_weighted_reward=True, slice_weights=[0.5, 0.5] (Uniform)")
+        print("\nFor the same heterogeneous scenarios.")
         return
     
-    if not global_reward_exps:
-        print("  ⚠️  No Global β reward experiments found")
-        print("      Run experiments with use_slice_weighted_reward=False")
-        return
+    print(f"\n✓ Found {len(complete_scenarios)} scenarios with both formulations")
     
-    if not uniform_reward_exps:
-        print("  ⚠️  No Uniform weighted reward experiments found")
-        print("      Run experiments with use_slice_weighted_reward=True and weights=[0.5, 0.5]")
-        return
+    # Collect data
+    scenario_names = sorted(complete_scenarios.keys())
     
-    # Find common scenarios
-    common_scenarios = set(global_reward_exps.keys()) & set(uniform_reward_exps.keys())
-    
-    if not common_scenarios:
-        print("  ⚠️  No common scenarios found between reward formulations")
-        print(f"      Global reward scenarios: {list(global_reward_exps.keys())}")
-        print(f"      Uniform reward scenarios: {list(uniform_reward_exps.keys())}")
-        return
-    
-    common_scenarios = sorted(common_scenarios, 
-                             key=lambda s: target_scenarios.index(s) if s in target_scenarios else 999)
-    
-    print(f"  Found {len(common_scenarios)} common scenarios:")
-    for scenario in common_scenarios:
-        print(f"    - {scenario}")
-    
-    # Collect data for plotting
-    scenarios = []
     global_betas = []
-    global_beta0s = []
-    global_beta1s = []
-    global_jfis = []
-    
     uniform_betas = []
     uniform_beta0s = []
     uniform_beta1s = []
     uniform_jfis = []
     
-    for scenario in common_scenarios:
-        scenarios.append(scenario)
+    for scenario_name in scenario_names:
+        print(f"\nProcessing: {scenario_name}")
         
-        # Global reward data
-        global_exp = global_reward_exps[scenario]
-        global_stats = global_exp['statistics'].get('beta')
+        # Global reward
+        global_exp = complete_scenarios[scenario_name]['global']
+        global_stats = global_exp['statistics'].get('beta', {})
+        global_beta = global_stats.get('last_100_mean', global_stats.get('mean', 0.0))
         
-        if global_stats:
-            global_beta = global_stats.get('last_100_mean', global_stats.get('mean'))
-            global_betas.append(global_beta if global_beta is not None else 0)
-        else:
-            global_betas.append(0)
+        if global_beta is None:
+            global_beta = 0.0
         
-        # For global reward, we don't have per-slice data, so we'll set them to N/A
-        # Or we can estimate from the global beta
-        global_beta0s.append(None)  # Not available
-        global_beta1s.append(None)  # Not available
-        global_jfis.append(None)    # Cannot compute without per-slice data
+        global_betas.append(global_beta)
+        print(f"  Global β: {global_beta:.4f}")
         
-        # Uniform reward data
-        uniform_exp = uniform_reward_exps[scenario]
-        uniform_stats = uniform_exp['statistics'].get('beta')
+        # Uniform reward
+        uniform_exp = complete_scenarios[scenario_name]['uniform']
+        uniform_stats = uniform_exp['statistics'].get('beta', {})
+        uniform_beta = uniform_stats.get('last_100_mean', uniform_stats.get('mean', 0.0))
         
-        if uniform_stats:
-            uniform_beta = uniform_stats.get('last_100_mean', uniform_stats.get('mean'))
-            uniform_betas.append(uniform_beta if uniform_beta is not None else 0)
-        else:
-            uniform_betas.append(0)
+        if uniform_beta is None:
+            uniform_beta = 0.0
         
-        # Compute per-slice stats for uniform reward
-        uniform_data = uniform_exp['data']
-        slice_stats = compute_per_slice_stats(uniform_data, 'dti_beta_slice')
+        uniform_betas.append(uniform_beta)
+        print(f"  Uniform β: {uniform_beta:.4f}")
         
-        if '0' in slice_stats and '1' in slice_stats:
-            beta0_mean = slice_stats['0'].get('last_100_mean', slice_stats['0'].get('mean'))
-            beta1_mean = slice_stats['1'].get('last_100_mean', slice_stats['1'].get('mean'))
-            
-            uniform_beta0s.append(beta0_mean if beta0_mean is not None else 0)
-            uniform_beta1s.append(beta1_mean if beta1_mean is not None else 0)
-            
-            # Compute JFI
-            if beta0_mean is not None and beta1_mean is not None:
-                jfi = compute_jains_fairness_index(beta0_mean, beta1_mean)
-                uniform_jfis.append(jfi)
-            else:
-                uniform_jfis.append(None)
-        else:
-            uniform_beta0s.append(None)
-            uniform_beta1s.append(None)
-            uniform_jfis.append(None)
+        # Per-slice for uniform
+        import numpy as np
+        beta0_values = uniform_exp['data']['dti_beta_slice0']['values']
+        beta1_values = uniform_exp['data']['dti_beta_slice1']['values']
+        
+        cutoff = int(len(beta0_values) * 0.8)
+        final_beta0 = np.array(beta0_values[cutoff:])
+        final_beta1 = np.array(beta1_values[cutoff:])
+        
+        beta0_mean = float(np.mean(final_beta0))
+        beta1_mean = float(np.mean(final_beta1))
+        
+        uniform_beta0s.append(beta0_mean)
+        uniform_beta1s.append(beta1_mean)
+        
+        print(f"  β₀: {beta0_mean:.4f}")
+        print(f"  β₁: {beta1_mean:.4f}")
+        
+        # JFI (Jain's Fairness Index)
+        s0 = 1.0 - beta0_mean
+        s1 = 1.0 - beta1_mean
+        jfi = (s0 + s1)**2 / (2 * (s0**2 + s1**2)) if (s0**2 + s1**2) > 0 else 0.0
+        
+        uniform_jfis.append(jfi)
+        print(f"  JFI: {jfi:.4f}")
     
-    # Create grouped bar chart
+    # Create figure
     fig, ax = plt.subplots(figsize=(14, 7))
     
-    x = np.arange(len(scenarios))
-    width = 0.15  # Width of each bar
+    x = np.arange(len(scenario_names))
+    width = 0.1
     
-    # Define positions for each metric group
-    # For each scenario, we have 4 metrics: Global β, β₀, β₁, JFI
-    # And 2 formulations: Global reward, Uniform reward
+    # Plot bars (5 bars per scenario)
+    ax.bar(x - 2.0*width, global_betas, width, 
+           label='Global β (Global Reward)', color='steelblue', alpha=0.8, edgecolor='black', linewidth=1.2)
+    ax.bar(x - 1.0*width, uniform_betas, width,
+           label='Global β (Uniform Reward)', color='coral', alpha=0.8, edgecolor='black', linewidth=1.2)
+    ax.bar(x + 0.0*width, uniform_beta0s, width,
+           label='β₀ (Uniform Reward)', color='lightskyblue', alpha=0.8, edgecolor='black', linewidth=1.2)
+    ax.bar(x + 1.0*width, uniform_beta1s, width,
+           label='β₁ (Uniform Reward)', color='lightcoral', alpha=0.8, edgecolor='black', linewidth=1.2)
+    ax.bar(x + 2.0*width, uniform_jfis, width,
+           label='JFI (Uniform Reward)', color='lightgreen', alpha=0.8, edgecolor='black', linewidth=1.2)
     
-    # Positions for Global reward formulation
-    pos_global_beta = x - 1.5*width
-    pos_global_beta0 = x - 0.5*width
-    pos_global_beta1 = x + 0.5*width
-    pos_global_jfi = x + 1.5*width
-    
-    # Colors
-    color_global = 'steelblue'
-    color_uniform = 'coral'
-    
-    # Plot Global reward formulation (only global β available)
-    ax.bar(pos_global_beta, global_betas, width, 
-           label='Global β (Global Reward)', 
-           color=color_global, alpha=0.8, edgecolor='black', linewidth=1.2)
-    
-    # For global reward, we can't plot β₀, β₁, JFI (no per-slice data)
-    # Show them as hatched bars at 0 to indicate N/A
-    ax.bar(pos_global_beta0, [0]*len(scenarios), width,
-           label='β₀ (Global Reward - N/A)',
-           color='lightgray', alpha=0.5, hatch='//', edgecolor='black', linewidth=1.2)
-    ax.bar(pos_global_beta1, [0]*len(scenarios), width,
-           label='β₁ (Global Reward - N/A)',
-           color='lightgray', alpha=0.5, hatch='//', edgecolor='black', linewidth=1.2)
-    ax.bar(pos_global_jfi, [0]*len(scenarios), width,
-           label='JFI (Global Reward - N/A)',
-           color='lightgray', alpha=0.5, hatch='//', edgecolor='black', linewidth=1.2)
-    
-    # Plot Uniform reward formulation (all metrics available)
-    # Position them slightly offset from Global reward
-    pos_uniform_offset = 4*width + 0.05  # Offset to separate the two groups
-    
-    ax.bar(pos_global_beta + pos_uniform_offset, uniform_betas, width,
-           label='Global β (Uniform Reward)',
-           color=color_uniform, alpha=0.8, edgecolor='black', linewidth=1.2)
-    
-    # Filter out None values for plotting
-    uniform_beta0s_plot = [v if v is not None else 0 for v in uniform_beta0s]
-    uniform_beta1s_plot = [v if v is not None else 0 for v in uniform_beta1s]
-    uniform_jfis_plot = [v if v is not None else 0 for v in uniform_jfis]
-    
-    ax.bar(pos_global_beta0 + pos_uniform_offset, uniform_beta0s_plot, width,
-           label='β₀ (Uniform Reward)',
-           color='lightskyblue', alpha=0.8, edgecolor='black', linewidth=1.2)
-    ax.bar(pos_global_beta1 + pos_uniform_offset, uniform_beta1s_plot, width,
-           label='β₁ (Uniform Reward)',
-           color='lightcoral', alpha=0.8, edgecolor='black', linewidth=1.2)
-    ax.bar(pos_global_jfi + pos_uniform_offset, uniform_jfis_plot, width,
-           label='JFI (Uniform Reward)',
-           color='lightgreen', alpha=0.8, edgecolor='black', linewidth=1.2)
-    
-    # Formatting
     ax.set_xlabel('Traffic Scenario', fontsize=12)
     ax.set_ylabel('Metric Value', fontsize=12)
     ax.set_title('Ablation Study: Global β Reward vs. Uniform Weighted Reward\n' +
                 'Per-Slice Violation Ratios and Fairness Across Heterogeneous Scenarios',
                 fontsize=14, fontweight='bold')
     ax.set_xticks(x)
-    ax.set_xticklabels(scenarios, rotation=15, ha='right')
-    ax.legend(loc='upper left', fontsize=9, ncol=2, framealpha=0.9)
+    ax.set_xticklabels(scenario_names, rotation=15, ha='right')
+    ax.legend(loc='upper left', fontsize=10, framealpha=0.9)
     ax.grid(True, alpha=0.3, axis='y')
     ax.set_ylim([0, 1.05])
     
-    # Add text annotation explaining the metrics
+    # Add note
     note_text = (
         "Note: β represents violation ratio (lower is better).\n"
-        "JFI (Jain's Fairness Index) ranges from 0 to 1 (1 = perfect fairness).\n"
-        "Global Reward: Per-slice metrics not available (uses traffic-weighted β)."
+        "JFI (Jain's Fairness Index) ranges from 0 to 1 (1 = perfect fairness)."
     )
     ax.text(0.98, 0.02, note_text,
            transform=ax.transAxes,
            verticalalignment='bottom',
            horizontalalignment='right',
            bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5),
-           fontsize=8)
+           fontsize=9)
     
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, f'fig_ablation_reward_formulation.{FIGURE_FORMAT}'),
+    plt.savefig(os.path.join(output_dir, f'fig_ablation_reward_robust.{FIGURE_FORMAT}'),
                 dpi=FIGURE_DPI, bbox_inches='tight')
     plt.close()
-    print(f"  ✓ fig_ablation_reward_formulation.{FIGURE_FORMAT}")
-    print(f"      Compared {len(common_scenarios)} scenarios")
- 
- 
+    
+    print(f"\n✓ fig_ablation_reward_robust.{FIGURE_FORMAT}")
+    print(f"  Scenarios: {', '.join(scenario_names)}")
 
-
+ 
 def generate_latex_table_static_homogeneous(exps_by_cat, baseline_data, output_dir):
     """Generate LaTeX table for static homogeneous results (Figure 2 data)."""
     print("\n[Table] Static Homogeneous Results...")
@@ -2266,7 +2168,7 @@ def main():
     fig_episode_per_slice_beta(experiments, args.output_dir, episode=160)
 
     # Ablation study: Reward formulation comparison
-    fig_ablation_reward_formulation(experiments, args.output_dir)
+    fig_ablation_reward_formulation_robust(experiments, args.output_dir)
 
     # Generate tables
     print("\n" + "="*80)
