@@ -7,6 +7,14 @@ figures_dynamic.py — Figure 5 and supporting dynamic-scenario plots.
     fig_episode_per_slice_beta       — per-slice β within a single episode
     fig_slice_beta_boxplot           — final distribution box plot per slice
     fig_actor_loss_comparison        — actor loss comparison
+    fig_ablation_reward_formulation_robust  — heterogeneous ablation bar chart
+    fig_dynamic_ablation_comparison  — 2×2 dynamic ablation subplots
+    fig_dynamic_ablation_bar_chart   — dynamic ablation grouped bar chart
+
+Ablation figures require an ablation_map dict that explicitly maps each
+run_name to its reward formulation label (e.g. 'global' or 'uniform').
+Pass it via the --ablation-map CLI argument (see step2_generate_figures.py).
+No date-based or name-pattern heuristics are used anywhere in this module.
 """
 
 import os
@@ -35,7 +43,14 @@ _PROFILE_NAMES = {
 # ---------------------------------------------------------------------------
 
 def fig5_dynamic_scenarios(exps_by_cat, output_dir):
-    """Generate all dynamic scenario figures (5a–5f3)."""
+    """
+    Generate all dynamic scenario figures (5a–5f3) for every dynamic experiment.
+
+    When there is only one dynamic experiment the output filenames use the
+    standard fig5* scheme.  When there are multiple, a short suffix derived
+    from the experiment's run_name is appended so files don't overwrite each
+    other (e.g. fig5a_dynamic_beta__run_xyz.png).
+    """
     print("\n[Figure 5] Dynamic Scenarios...")
 
     exps = exps_by_cat['dynamic']
@@ -43,29 +58,45 @@ def fig5_dynamic_scenarios(exps_by_cat, output_dir):
         print("  ⚠️  No dynamic experiments")
         return
 
-    exp = exps[0]
-    data = exp['data']
+    multi = len(exps) > 1
 
-    # 5a: Beta time series
-    _fig5a_beta_timeseries(data, output_dir)
+    for exp in exps:
+        suffix = f'__{exp["run_name"]}' if multi else ''
+        data   = exp['data']
+        pool   = exp.get('dynamic_profile_set', [])
+        period = exp.get('dynamic_change_period')
+        pool_str   = f"[{', '.join(pool)}]" if pool else ''
+        period_str = f", T={period} DTIs" if period else ''
+        print(f"\n  Processing: {exp['run_name']} — {exp['scenario_str']}{pool_str}{period_str}")
 
-    # 5b: Allocation time series
-    _fig5b_allocation_timeseries(data, output_dir)
+        # 5a: Beta time series
+        _fig5a_beta_timeseries(data, output_dir, suffix)
 
-    # Episode 80
-    _fig5_episode_profiles(data, output_dir, episode=80, label='fig5c')
-    _fig5_allocation_periods(data, output_dir, episode=80, label_prefix='fig5d')
-    _fig5_continuous_allocation(data, output_dir, episode=80, label='fig5d2')
-    _fig5_continuous_beta(data, output_dir, episode=80, label='fig5d3')
+        # 5b: Allocation time series
+        _fig5b_allocation_timeseries(exp, output_dir, suffix)
 
-    # Episode 160
-    _fig5_episode_profiles(data, output_dir, episode=160, label='fig5e')
-    _fig5_allocation_periods(data, output_dir, episode=160, label_prefix='fig5f')
-    _fig5_continuous_allocation(data, output_dir, episode=160, label='fig5f2')
-    _fig5_continuous_beta(data, output_dir, episode=160, label='fig5f3')
+        # Episode 80
+        _fig5_episode_profiles(data, output_dir, episode=80,
+                                label=f'fig5c{suffix}')
+        _fig5_allocation_periods(exp, output_dir, episode=80,
+                                 label_prefix=f'fig5d{suffix}')
+        _fig5_continuous_allocation(exp, output_dir, episode=80,
+                                    label=f'fig5d2{suffix}')
+        _fig5_continuous_beta(data, output_dir, episode=80,
+                              label=f'fig5d3{suffix}')
+
+        # Episode 160
+        _fig5_episode_profiles(data, output_dir, episode=160,
+                                label=f'fig5e{suffix}')
+        _fig5_allocation_periods(exp, output_dir, episode=160,
+                                 label_prefix=f'fig5f{suffix}')
+        _fig5_continuous_allocation(exp, output_dir, episode=160,
+                                    label=f'fig5f2{suffix}')
+        _fig5_continuous_beta(data, output_dir, episode=160,
+                              label=f'fig5f3{suffix}')
 
 
-def _fig5a_beta_timeseries(data, output_dir):
+def _fig5a_beta_timeseries(data, output_dir, suffix=''):
     if 'dti_beta' not in data:
         return
     fig, ax = plt.subplots(figsize=(12, 6))
@@ -76,69 +107,90 @@ def _fig5a_beta_timeseries(data, output_dir):
     ax.set_ylabel(LABEL_BETA)
     ax.set_title('Dynamic Traffic Adaptation: QoS Performance')
     ax.grid(True, alpha=0.3)
-    for switch in range(200, int(max(steps)), 200):
-        ax.axvline(x=switch, color='gray', linestyle=':', alpha=0.5)
-    _save(fig, output_dir, 'fig5a_dynamic_beta')
+    _save(fig, output_dir, f'fig5a_dynamic_beta{suffix}')
 
 
-def _fig5b_allocation_timeseries(data, output_dir):
+def _fig5b_allocation_timeseries(exp, output_dir, suffix=''):
+    data   = exp['data']
+    labels = exp.get('slice_labels', [])
+    K      = exp.get('K', 2)
+
+    plotted = False
     fig, ax = plt.subplots(figsize=(12, 6))
-    for key in ['dti_action_slice0', 'dti_action_slice1']:
+    for k in range(K):
+        key = f'dti_action_slice{k}'
         if key in data:
-            slice_num = key.split('slice')[-1]
+            slice_name = labels[k] if k < len(labels) else f'Slice {k}'
             ax.plot(np.array(data[key]['steps']),
                     np.array(data[key]['values']),
-                    label=f'Slice {slice_num}', alpha=0.7, linewidth=1)
+                    label=slice_name, alpha=0.7, linewidth=1)
+            plotted = True
+
+    if not plotted:
+        plt.close(fig)
+        return
+
     ax.set_xlabel(LABEL_DTI)
     ax.set_ylabel(LABEL_RBS)
     ax.set_title('Dynamic Traffic Adaptation: Resource Allocation')
     ax.legend()
     ax.grid(True, alpha=0.3)
-    if 'dti_beta' in data:
-        max_step = max(data['dti_beta']['steps'])
-        for switch in range(200, int(max_step), 200):
-            ax.axvline(x=switch, color='gray', linestyle=':', alpha=0.5)
-    _save(fig, output_dir, 'fig5b_dynamic_allocation')
+    _save(fig, output_dir, f'fig5b_dynamic_allocation{suffix}')
 
 
 def _fig5_episode_profiles(data, output_dir, episode, label):
-    """Active traffic profiles within a single episode."""
-    ep_key = f'ep{episode}_action_slice0'
-    if ep_key not in data:
-        return
-    if ('dti_active_profile_slice0' not in data or
-            'dti_active_profile_slice1' not in data):
-        return
+    """
+    Active traffic profiles within a single episode.
 
-    ep_start = episode * 2000
-    ep_end = (episode + 1) * 2000
+    Uses the per-episode keys logged directly by step1:
+      episode_{N}/active_profile_slice0  →  ep{N}_active_profile_slice0
+      episode_{N}/active_profile_slice1  →  ep{N}_active_profile_slice1
+    The x-axis index is the position within the episode's values list (0-based DTI).
+    Y-axis ticks are derived from the profile integer values actually present in
+    the data, mapped through _PROFILE_NAMES where available.
+    """
+    s0_key = f'ep{episode}_active_profile_slice0'
+    s1_key = f'ep{episode}_active_profile_slice1'
+    if s0_key not in data or s1_key not in data:
+        print(f"  ⚠️  Skipping {label}: '{s0_key}' or '{s1_key}' not in data")
+        return
 
     fig, ax = plt.subplots(figsize=(10, 6))
-    style = [('-', 'steelblue'), ('--', 'coral')]
-    for idx, key in enumerate(['dti_active_profile_slice0', 'dti_active_profile_slice1']):
-        ls, color = style[idx]
-        all_steps = np.array(data[key]['steps'])
-        all_values = np.array(data[key]['values'])
-        mask = (all_steps >= ep_start) & (all_steps < ep_end)
-        steps = all_steps[mask] - ep_start
-        values = all_values[mask]
+    style = [('-', 'steelblue', (None, None)), ('--', 'coral', (5, 3))]
+    all_values = []
+    for idx, (key, (ls, color, dashes)) in enumerate(
+            zip([s0_key, s1_key], style)):
+        values = np.array(data[key]['values'])
+        all_values.extend(values.tolist())
+        dtis = np.arange(len(values))
         kw = dict(where='post', alpha=0.8, linewidth=2.5, linestyle=ls, color=color)
-        if idx == 1:
-            kw['dashes'] = (5, 3)
-        ax.step(steps, values, label=f'Slice {idx}', **kw)
+        if dashes[0] is not None:
+            kw['dashes'] = dashes
+        ax.step(dtis, values, label=f'Slice {idx}', **kw)
+
+    # Build yticks only from profile IDs actually present in the data
+    present_ids = sorted(set(int(v) for v in all_values))
+    ax.set_yticks(present_ids)
+    ax.set_yticklabels([_PROFILE_NAMES.get(i, str(i)) for i in present_ids])
 
     ax.set_xlabel(f'DTI (within Episode {episode})')
     ax.set_ylabel('Active Traffic Profile')
     ax.set_title(f'Traffic Profile Changes (Episode {episode})')
-    ax.set_yticks(list(_PROFILE_NAMES.keys()))
-    ax.set_yticklabels(list(_PROFILE_NAMES.values()))
     ax.legend()
     ax.grid(True, alpha=0.3)
     _save(fig, output_dir, f'{label}_dynamic_profiles_ep{episode}')
 
 
-def _fig5_allocation_periods(data, output_dir, episode, label_prefix):
-    """Box plots per 200-DTI period within an episode."""
+def _fig5_allocation_periods(exp, output_dir, episode, label_prefix):
+    """
+    Box plots per period within an episode.
+
+    Period boundaries are derived from the steps array logged by step1.
+    """
+    data   = exp['data']
+    labels = exp.get('slice_labels', [])
+    K      = exp.get('K', 2)
+
     s0_key = f'ep{episode}_action_slice0'
     s1_key = f'ep{episode}_action_slice1'
     if s0_key not in data or s1_key not in data:
@@ -146,25 +198,43 @@ def _fig5_allocation_periods(data, output_dir, episode, label_prefix):
 
     slice0 = data[s0_key]['values']
     slice1 = data[s1_key]['values']
-    period_size = 200
-    num_periods = len(slice0) // period_size
+    steps  = data[s0_key].get('steps', list(range(len(slice0))))
+
+    # Infer period size from step gaps
+    if len(steps) > 1:
+        gaps = [steps[i+1] - steps[i] for i in range(len(steps) - 1)]
+        period_size = max(set(gaps), key=gaps.count)
+        period_size = max(period_size, 1)
+    else:
+        period_size = 1
+
+    n_points   = len(slice0)
+    num_periods = n_points // period_size if period_size > 0 else 1
+
+    s0_name = labels[0] if len(labels) > 0 else 'Slice 0'
+    s1_name = labels[1] if len(labels) > 1 else 'Slice 1'
 
     fig, ax = plt.subplots(figsize=(14, 6))
-    box_data, labels, positions, colors = [], [], [], []
+    box_data, box_labels, positions, colors = [], [], [], []
 
     for p in range(num_periods):
-        start, end = p * period_size, (p + 1) * period_size
-        s0p, s1p = slice0[start:end], slice1[start:end]
+        start_idx = p * period_size
+        end_idx   = (p + 1) * period_size
+        s0p = slice0[start_idx:end_idx]
+        s1p = slice1[start_idx:end_idx]
         if not s0p or not s1p:
             continue
+        step_start = steps[start_idx]
+        step_end   = steps[min(end_idx - 1, len(steps) - 1)]
         base = p * 2.5
-        box_data += [s0p, s1p]
-        labels += [f'{start}-{end-1}\nS0', f'{start}-{end-1}\nS1']
-        positions += [base, base + 1]
-        colors += ['lightblue', 'lightcoral']
+        box_data   += [s0p, s1p]
+        box_labels += [f'{step_start}-{step_end}\n{s0_name}',
+                       f'{step_start}-{step_end}\n{s1_name}']
+        positions  += [base, base + 1]
+        colors     += ['lightblue', 'lightcoral']
 
     if box_data:
-        bp = ax.boxplot(box_data, positions=positions, labels=labels,
+        bp = ax.boxplot(box_data, positions=positions, labels=box_labels,
                         patch_artist=True, widths=0.8)
         for patch, color in zip(bp['boxes'], colors):
             patch.set_facecolor(color)
@@ -179,28 +249,32 @@ def _fig5_allocation_periods(data, output_dir, episode, label_prefix):
     ax.grid(True, alpha=0.3, axis='y')
     plt.xticks(rotation=45, ha='right', fontsize=8)
     ax.legend(handles=[
-        Patch(facecolor='lightblue', alpha=0.7, label='Slice 0'),
-        Patch(facecolor='lightcoral', alpha=0.7, label='Slice 1'),
+        Patch(facecolor='lightblue',  alpha=0.7, label=s0_name),
+        Patch(facecolor='lightcoral', alpha=0.7, label=s1_name),
     ], loc='upper right')
     _save(fig, output_dir, f'{label_prefix}_dynamic_allocation_periods_ep{episode}',
           note=f'{num_periods} periods')
 
 
-def _fig5_continuous_allocation(data, output_dir, episode, label):
-    """Continuous allocation curves (TensorBoard-style) for one episode."""
+def _fig5_continuous_allocation(exp, output_dir, episode, label):
+    """Continuous allocation curves for one episode."""
+    data   = exp['data']
+    labels = exp.get('slice_labels', [])
+
     s0_key = f'ep{episode}_action_slice0'
     s1_key = f'ep{episode}_action_slice1'
     if s0_key not in data or s1_key not in data:
         return
 
+    steps   = data[s0_key].get('steps', list(range(len(data[s0_key]['values']))))
+    s0_name = labels[0] if len(labels) > 0 else 'Slice 0'
+    s1_name = labels[1] if len(labels) > 1 else 'Slice 1'
+
     fig, ax = plt.subplots(figsize=(14, 6))
-    dtis = np.arange(len(data[s0_key]['values']))
-    ax.plot(dtis, data[s0_key]['values'], color='steelblue', alpha=0.8,
-            linewidth=1.5, label='Slice 0')
-    ax.plot(dtis, data[s1_key]['values'], color='coral', alpha=0.8,
-            linewidth=1.5, label='Slice 1')
-    for p in range(1, 10):
-        ax.axvline(x=p * 200, color='gray', linestyle=':', alpha=0.5, linewidth=1)
+    ax.plot(steps, data[s0_key]['values'], color='steelblue', alpha=0.8,
+            linewidth=1.5, label=s0_name)
+    ax.plot(steps, data[s1_key]['values'], color='coral', alpha=0.8,
+            linewidth=1.5, label=s1_name)
     ax.set_xlabel(f'DTI (within Episode {episode})', fontsize=12)
     ax.set_ylabel(LABEL_RBS, fontsize=12)
     ax.set_title(f'Continuous Allocation Over Time (Episode {episode})',
@@ -213,18 +287,14 @@ def _fig5_continuous_allocation(data, output_dir, episode, label):
 def _fig5_continuous_beta(data, output_dir, episode, label):
     """Continuous beta curve for one episode."""
     ep_key = f'ep{episode}_beta'
-    print(f"\n  [DEBUG] 'ep{episode}_beta' in data: {ep_key in data}")
     if ep_key not in data:
         print(f"  ⚠️  Skipping {label} — '{ep_key}' not in data")
         return
 
+    steps = data[ep_key].get('steps', list(range(len(data[ep_key]['values']))))
     fig, ax = plt.subplots(figsize=(14, 6))
-    betas = data[ep_key]['values']
-    dtis = np.arange(len(betas))
-    ax.plot(dtis, betas, color='red', alpha=0.8, linewidth=2.0,
+    ax.plot(steps, data[ep_key]['values'], color='red', alpha=0.8, linewidth=2.0,
             label='β (QoS Violation Ratio)')
-    for p in range(1, 10):
-        ax.axvline(x=p * 200, color='gray', linestyle=':', alpha=0.5, linewidth=1)
     ax.axhline(y=0, color='green', linestyle='--', alpha=0.3, linewidth=1,
                label='Perfect QoS (β=0)')
     ax.set_xlabel(f'DTI (within Episode {episode})', fontsize=12)
@@ -294,17 +364,20 @@ def fig_per_slice_beta_training(experiments, output_dir):
     if not exp:
         return
 
-    data = exp['data']
-    steps = np.array(data['dti_beta']['steps'])
+    data   = exp['data']
+    labels = exp.get('slice_labels', [])
 
     fig, ax = plt.subplots(figsize=(12, 6))
-    ax.plot(steps, np.array(data['dti_beta']['values']),
+    global_steps = np.array(data['dti_beta']['steps'])
+    ax.plot(global_steps, np.array(data['dti_beta']['values']),
             label='Global β', color='black', linewidth=2.0, alpha=0.8)
-    for k, (color, name) in enumerate(zip(['steelblue', 'coral'], ['VoIP', 'CBR'])):
+    for k, color in enumerate(['steelblue', 'coral']):
         key = f'dti_beta_slice{k}'
         if key in data:
-            ax.plot(steps, np.array(data[key]['values']),
-                    label=f'Slice {k} β ({name})', color=color,
+            slice_name = labels[k] if k < len(labels) else f'Slice {k}'
+            slice_steps = np.array(data[key]['steps'])
+            ax.plot(slice_steps, np.array(data[key]['values']),
+                    label=f'{slice_name} β', color=color,
                     linewidth=1.5, alpha=0.7, linestyle='--')
     ax.set_xlabel(LABEL_DTI, fontsize=12)
     ax.set_ylabel(LABEL_BETA, fontsize=12)
@@ -365,18 +438,19 @@ def fig_episode_per_slice_beta(experiments, output_dir, episode=80):
         print(f"  ⚠️  No dynamic experiment with episode {episode} per-slice beta data")
         return
 
-    data = exp['data']
+    data   = exp['data']
+    labels = exp.get('slice_labels', [])
+    s0_name = labels[0] if len(labels) > 0 else 'Slice 0'
+    s1_name = labels[1] if len(labels) > 1 else 'Slice 1'
+    steps = data[ep_key].get('steps', list(range(len(data[ep_key]['values']))))
     global_beta = np.array(data[ep_key]['values'])
-    dtis = np.arange(len(global_beta))
 
     fig, ax = plt.subplots(figsize=(14, 6))
-    ax.plot(dtis, global_beta, label='Global β', color='black', linewidth=2.0, alpha=0.8)
-    ax.plot(dtis, np.array(data[s0_key]['values']),
-            label='Slice 0 β (VoIP)', color='steelblue', linewidth=1.5, alpha=0.7, linestyle='--')
-    ax.plot(dtis, np.array(data[s1_key]['values']),
-            label='Slice 1 β (CBR)', color='coral', linewidth=1.5, alpha=0.7, linestyle='--')
-    for p in range(1, 10):
-        ax.axvline(x=p * 200, color='gray', linestyle=':', alpha=0.5, linewidth=1)
+    ax.plot(steps, global_beta, label='Global β', color='black', linewidth=2.0, alpha=0.8)
+    ax.plot(steps, np.array(data[s0_key]['values']),
+            label=f'{s0_name} β', color='steelblue', linewidth=1.5, alpha=0.7, linestyle='--')
+    ax.plot(steps, np.array(data[s1_key]['values']),
+            label=f'{s1_name} β', color='coral', linewidth=1.5, alpha=0.7, linestyle='--')
     ax.axhline(y=0, color='green', linestyle='--', alpha=0.3, linewidth=1)
     ax.set_xlabel(f'DTI (within Episode {episode})', fontsize=12)
     ax.set_ylabel(LABEL_BETA, fontsize=12)
@@ -396,14 +470,17 @@ def fig_slice_beta_boxplot(experiments, output_dir):
     if not exp:
         return
 
-    data = exp['data']
+    data   = exp['data']
+    labels = exp.get('slice_labels', [])
+    s0_name = labels[0] if len(labels) > 0 else 'Slice 0'
+    s1_name = labels[1] if len(labels) > 1 else 'Slice 1'
     beta0 = np.array(data['dti_beta_slice0']['values'])
     beta1 = np.array(data['dti_beta_slice1']['values'])
     cutoff = int(len(beta0) * 0.8)
     fb0, fb1 = beta0[cutoff:], beta1[cutoff:]
 
     fig, ax = plt.subplots(figsize=(10, 6))
-    bp = ax.boxplot([fb0, fb1], labels=['Slice 0 (VoIP)', 'Slice 1 (CBR)'],
+    bp = ax.boxplot([fb0, fb1], labels=[s0_name, s1_name],
                     patch_artist=True, widths=0.6)
     for patch, color in zip(bp['boxes'], ['lightblue', 'lightcoral']):
         patch.set_facecolor(color)
@@ -428,24 +505,37 @@ def fig_slice_beta_boxplot(experiments, output_dir):
 # Ablation: Dynamic Comparison
 # ---------------------------------------------------------------------------
 
-def fig_dynamic_ablation_comparison(experiments, output_dir):
-    """2×2 subplots: [L,M,H] vs [EL,L,M,H,EH] × Global vs Uniform reward."""
+def fig_dynamic_ablation_comparison(experiments, output_dir, ablation_map):
+    """
+    2×2 subplots: traffic-range × reward-type.
+
+    ablation_map: dict mapping run_name → reward-type label (e.g. 'global'/'uniform').
+    Experiments are grouped first by the number of unique profiles in their
+    scenario (traffic range), then by their reward type from ablation_map.
+    """
     print("\n[Figure] Dynamic Scenarios Ablation...")
 
-    groups = _group_dynamic_by_range(experiments)
+    groups = _group_dynamic_by_range(experiments, ablation_map)
+    if groups is None:
+        return
+
     r3, r5 = groups['range_3'], groups['range_5']
 
     if not all(r3.values()) or not all(r5.values()):
         print("  ⚠️  Missing experiments for complete comparison")
-        _debug_dynamic(experiments)
+        _debug_dynamic(experiments, ablation_map)
         return
+
+    # Derive axis titles from actual scenario_str values
+    def _title(exp, reward_label):
+        return f'{exp["scenario_str"]} — {reward_label.capitalize()} Reward'
 
     fig, axes = plt.subplots(2, 2, figsize=(16, 10))
     combos = [
-        (axes[0, 0], r3['global'],  '[L,M,H] Range — Global β Reward',    'steelblue'),
-        (axes[0, 1], r3['uniform'], '[L,M,H] Range — Uniform Weighted',    'coral'),
-        (axes[1, 0], r5['global'],  '[EL,L,M,H,EH] Range — Global β',      'steelblue'),
-        (axes[1, 1], r5['uniform'], '[EL,L,M,H,EH] Range — Uniform',        'coral'),
+        (axes[0, 0], r3['global'],  _title(r3['global'],  'global'),  'steelblue'),
+        (axes[0, 1], r3['uniform'], _title(r3['uniform'], 'uniform'), 'coral'),
+        (axes[1, 0], r5['global'],  _title(r5['global'],  'global'),  'steelblue'),
+        (axes[1, 1], r5['uniform'], _title(r5['uniform'], 'uniform'), 'coral'),
     ]
 
     for ax, exp, title, color in combos:
@@ -468,25 +558,37 @@ def fig_dynamic_ablation_comparison(experiments, output_dir):
         ax.grid(True, alpha=0.3)
         ax.set_ylim([0, 1.05])
 
-    plt.suptitle('Dynamic Traffic Adaptation: Global vs Uniform Reward',
+    plt.suptitle('Dynamic Traffic Adaptation: Reward Formulation Comparison',
                  fontsize=14, fontweight='bold', y=0.995)
     plt.tight_layout()
     _save(fig, output_dir, 'fig_dynamic_ablation_comparison')
 
 
-def fig_dynamic_ablation_bar_chart(experiments, output_dir):
-    """Bar chart comparing Global β, β0, β1, JFI across dynamic ranges/rewards."""
+def fig_dynamic_ablation_bar_chart(experiments, output_dir, ablation_map):
+    """
+    Bar chart comparing Global β, β0, β1, JFI across dynamic ranges/rewards.
+
+    ablation_map: dict mapping run_name → reward-type label.
+    """
     print("\n[Figure] Dynamic Scenarios Performance Comparison...")
 
-    groups = _group_dynamic_by_range(experiments)
+    groups = _group_dynamic_by_range(experiments, ablation_map)
+    if groups is None:
+        return
+
     r3, r5 = groups['range_3'], groups['range_5']
 
     if not all(r3.values()) or not all(r5.values()):
         print("  ⚠️  Missing experiments")
         return
 
-    labels = ['[L,M,H]\nGlobal', '[L,M,H]\nUniform',
-              '[EL,L,M,H,EH]\nGlobal', '[EL,L,M,H,EH]\nUniform']
+    # Build x-axis labels from the actual scenario_str
+    labels = [
+        f'{r3["global"]["scenario_str"]}\n{_reward_label(r3["global"], ablation_map).capitalize()}',
+        f'{r3["uniform"]["scenario_str"]}\n{_reward_label(r3["uniform"], ablation_map).capitalize()}',
+        f'{r5["global"]["scenario_str"]}\n{_reward_label(r5["global"], ablation_map).capitalize()}',
+        f'{r5["uniform"]["scenario_str"]}\n{_reward_label(r5["uniform"], ablation_map).capitalize()}',
+    ]
     exps_ordered = [r3['global'], r3['uniform'], r5['global'], r5['uniform']]
 
     g_betas, b0s, b1s, jfis = [], [], [], []
@@ -511,9 +613,9 @@ def fig_dynamic_ablation_bar_chart(experiments, output_dir):
     w = 0.2
     for offset, vals, label, color in [
         (-1.5 * w, g_betas, 'Global β', 'steelblue'),
-        (-0.5 * w, b0s, 'β0', 'lightskyblue'),
-        (0.5 * w, b1s, 'β1', 'lightcoral'),
-        (1.5 * w, jfis, 'JFI', 'lightgreen'),
+        (-0.5 * w, b0s,     'β0',        'lightskyblue'),
+        (0.5 * w,  b1s,     'β1',        'lightcoral'),
+        (1.5 * w,  jfis,    'JFI',       'lightgreen'),
     ]:
         ax.bar(x + offset, vals, w, label=label,
                alpha=0.8, edgecolor='black', linewidth=1.2, color=color)
@@ -523,7 +625,7 @@ def fig_dynamic_ablation_bar_chart(experiments, output_dir):
     ax.set_title('Dynamic Traffic: Performance Across Ranges and Reward Formulations',
                  fontsize=14, fontweight='bold')
     ax.set_xticks(x)
-    ax.set_xticklabels(labels, fontsize=10)
+    ax.set_xticklabels(labels, fontsize=9)
     ax.legend(loc='upper right', framealpha=0.9, fontsize=10)
     ax.grid(True, alpha=0.3, axis='y')
     ax.set_ylim([0, 1.05])
@@ -534,76 +636,104 @@ def fig_dynamic_ablation_bar_chart(experiments, output_dir):
 # Ablation: Heterogeneous Reward Formulation
 # ---------------------------------------------------------------------------
 
-def fig_ablation_reward_formulation_robust(experiments, output_dir):
+def fig_ablation_reward_formulation_robust(experiments, output_dir, ablation_map):
     """
-    Grouped bar chart: Global β reward vs Uniform weighted reward across
-    heterogeneous scenarios, showing Global β / β0 / β1 / JFI.
+    Grouped bar chart: reward formulation comparison across heterogeneous
+    scenarios, showing Global β / β0 / β1 / JFI per reward type.
+
+    ablation_map: dict mapping run_name → reward-type label.
+    Experiments that share the same scenario_str are paired by reward type.
     """
     print("\n[Figure] Ablation Study: Reward Formulation Comparison...")
 
     hetero_exps = [e for e in experiments if e['category'] == 'static_heterogeneous']
-    complete = _group_hetero_by_reward(hetero_exps)
+    complete = _group_by_reward(hetero_exps, ablation_map)
 
     if not complete:
-        print("  ⚠️  No scenarios with both Global and Uniform reward formulations!")
+        print("  ⚠️  No scenarios with paired reward formulations in ablation_map!")
+        _debug_ablation(hetero_exps, ablation_map)
         return
 
+    # Collect all reward-type labels present (preserving insertion order)
+    all_rtypes = []
+    for pairs in complete.values():
+        for rt in pairs:
+            if rt not in all_rtypes:
+                all_rtypes.append(rt)
+
     scenario_names = sorted(complete.keys())
-    g_betas, g_b0s, g_b1s, g_jfis = [], [], [], []
-    u_betas, u_b0s, u_b1s, u_jfis = [], [], [], []
+    # One list of bar values per reward-type per metric
+    data_by_rtype = {rt: {'betas': [], 'b0s': [], 'b1s': [], 'jfis': []}
+                     for rt in all_rtypes}
 
     for sname in scenario_names:
-        for vals_list, b0_list, b1_list, jfi_list, exp in [
-            (g_betas, g_b0s, g_b1s, g_jfis, complete[sname]['global']),
-            (u_betas, u_b0s, u_b1s, u_jfis, complete[sname]['uniform']),
-        ]:
+        for rt in all_rtypes:
+            exp = complete[sname].get(rt)
+            if exp is None:
+                # Scenario not available for this reward type
+                data_by_rtype[rt]['betas'].append(0)
+                data_by_rtype[rt]['b0s'].append(0)
+                data_by_rtype[rt]['b1s'].append(0)
+                data_by_rtype[rt]['jfis'].append(0)
+                continue
+
             stats = exp['statistics'].get('beta', {})
             beta_val = stats.get('last_100_mean', stats.get('mean', 0)) or 0
-            vals_list.append(beta_val)
+            data_by_rtype[rt]['betas'].append(beta_val)
 
             b0m, _, b1m, _ = _final_slice_means(exp)
             if b0m is not None:
-                b0_list.append(b0m)
-                b1_list.append(b1m)
                 s0, s1 = 1 - b0m, 1 - b1m
                 denom = 2 * (s0 ** 2 + s1 ** 2)
-                jfi_list.append((s0 + s1) ** 2 / denom if denom > 0 else 0)
+                jfi = (s0 + s1) ** 2 / denom if denom > 0 else 0
+                data_by_rtype[rt]['b0s'].append(b0m)
+                data_by_rtype[rt]['b1s'].append(b1m)
+                data_by_rtype[rt]['jfis'].append(jfi)
             else:
-                b0_list.append(0)
-                b1_list.append(0)
-                jfi_list.append(0)
+                data_by_rtype[rt]['b0s'].append(0)
+                data_by_rtype[rt]['b1s'].append(0)
+                data_by_rtype[rt]['jfis'].append(0)
 
-    fig, ax = plt.subplots(figsize=(14, 7))
+    # 4 metrics × N reward-types bars per scenario
+    n_metrics = 4
+    n_rtypes = len(all_rtypes)
+    n_bars = n_metrics * n_rtypes
+    w = 0.8 / n_bars
+
+    # Colour palette: cycle through two hue families (blues then oranges)
+    palette = ['#5B9BD5', '#9DC3E6', '#BDD7EE', '#DEEBF7',
+               '#ED7D31', '#F4B183', '#FCE4D6', '#92D050']
+
+    fig, ax = plt.subplots(figsize=(max(12, len(scenario_names) * 3), 7))
     x = np.arange(len(scenario_names))
-    w = 0.09
 
-    bar_specs = [
-        (-3.5 * w, g_betas, 'Global β (Global)',  '#5B9BD5'),
-        (-2.5 * w, g_b0s,   'β0 (Global)',         '#9DC3E6'),
-        (-1.5 * w, g_b1s,   'β1 (Global)',          '#BDD7EE'),
-        (-0.5 * w, g_jfis,  'JFI (Global)',         '#DEEBF7'),
-        (0.5 * w,  u_betas, 'Global β (Uniform)',  '#ED7D31'),
-        (1.5 * w,  u_b0s,   'β0 (Uniform)',         '#F4B183'),
-        (2.5 * w,  u_b1s,   'β1 (Uniform)',          '#FCE4D6'),
-        (3.5 * w,  u_jfis,  'JFI (Uniform)',         '#92D050'),
-    ]
-    for offset, vals, label, color in bar_specs:
-        ax.bar(x + offset, vals, w, label=label,
-               color=color, alpha=0.9, edgecolor='black', linewidth=1.2)
+    bar_idx = 0
+    for rt in all_rtypes:
+        d = data_by_rtype[rt]
+        for metric_label, vals in [
+            (f'Global β ({rt})', d['betas']),
+            (f'β0 ({rt})',        d['b0s']),
+            (f'β1 ({rt})',        d['b1s']),
+            (f'JFI ({rt})',       d['jfis']),
+        ]:
+            offset = (bar_idx - n_bars / 2 + 0.5) * w
+            color = palette[bar_idx % len(palette)]
+            ax.bar(x + offset, vals, w, label=metric_label,
+                   color=color, alpha=0.9, edgecolor='black', linewidth=1.0)
+            bar_idx += 1
 
     ax.set_xlabel('Traffic Scenario', fontsize=12)
     ax.set_ylabel('Metric Value', fontsize=12)
-    ax.set_title(
-        'Ablation Study: Global β Reward vs. Uniform Weighted Reward\n'
-        'Per-Slice Violation Ratios and Fairness Across Heterogeneous Scenarios',
-        fontsize=14, fontweight='bold')
+    ax.set_title('Ablation Study: Reward Formulation Comparison\n'
+                 'Per-Slice Violation Ratios and Fairness Across Heterogeneous Scenarios',
+                 fontsize=14, fontweight='bold')
     ax.set_xticks(x)
     ax.set_xticklabels(scenario_names, rotation=15, ha='right')
-    ax.legend(loc='upper left', fontsize=9, ncol=2, framealpha=0.9)
+    ax.legend(loc='upper left', fontsize=8, ncol=n_rtypes * 2, framealpha=0.9)
     ax.grid(True, alpha=0.3, axis='y')
     ax.set_ylim([0, 1.05])
     ax.text(0.98, 0.02,
-            "Note: β = violation ratio (lower is better).\n"
+            "β = violation ratio (lower is better).\n"
             "JFI (Jain's Fairness Index): 1 = perfect fairness.",
             transform=ax.transAxes, va='bottom', ha='right',
             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5), fontsize=9)
@@ -652,39 +782,115 @@ def _final_slice_means(exp, cutoff_frac=0.8):
             float(np.mean(b1[cut:])), float(np.std(b1[cut:])))
 
 
-def _group_dynamic_by_range(experiments):
-    """Split dynamic experiments into 3-profile and 5-profile groups."""
-    range_3 = {'global': None, 'uniform': None}
-    range_5 = {'global': None, 'uniform': None}
+def _build_ablation_map_from_data(experiments):
+    """
+    Build an ablation_map dict from the reward_formulation field stored
+    in each experiment by step1.  Falls back gracefully if the field is absent.
 
-    for exp in [e for e in experiments if e['category'] == 'dynamic']:
-        n = len(set(exp['scenario'].values()))
-        run_name = exp['run_name']
-        rtype = 'global' if ('20260307' in run_name or '20260317' in run_name) else 'uniform'
-        group = range_3 if n == 3 else range_5
-        if group[rtype] is None:
-            group[rtype] = exp
+    Returns:
+        {run_name: reward_formulation_label, ...}
+    """
+    mapping = {}
+    for exp in experiments:
+        rf = exp.get('reward_formulation')
+        if rf:
+            mapping[exp['run_name']] = rf
+    return mapping
 
-    return {'range_3': range_3, 'range_5': range_5}
+
+def _reward_label(exp, ablation_map):
+    """Look up the reward-type label for an experiment from ablation_map."""
+    return ablation_map.get(exp['run_name'], 'unknown')
 
 
-def _group_hetero_by_reward(hetero_exps):
-    """Return {scenario_str: {'global': exp, 'uniform': exp}} for complete pairs."""
-    scenarios = {}
-    for exp in hetero_exps:
+def _group_by_reward(exps, ablation_map):
+    """
+    Group experiments by (scenario_str, reward_type) using ablation_map.
+
+    Returns:
+        {scenario_str: {reward_type: exp, ...}, ...}
+        Only scenarios that have at least two distinct reward types are returned.
+    """
+    groups = {}
+    unrecognised = []
+    for exp in exps:
+        rtype = ablation_map.get(exp['run_name'])
+        if rtype is None:
+            unrecognised.append(exp['run_name'])
+            continue
         key = exp['scenario_str']
-        scenarios.setdefault(key, {'global': None, 'uniform': None})
-        run_name = exp['run_name']
-        rtype = 'global' if ('20260307' in run_name or '20260317' in run_name) else 'uniform'
-        scenarios[key][rtype] = exp
-    return {k: v for k, v in scenarios.items()
-            if v['global'] is not None and v['uniform'] is not None}
+        groups.setdefault(key, {})
+        groups[key][rtype] = exp
+
+    if unrecognised:
+        print(f"  ⚠️  The following run_names are not in ablation_map and will be skipped:")
+        for name in unrecognised:
+            print(f"       {name}")
+
+    # Keep only scenarios that have more than one reward type
+    return {k: v for k, v in groups.items() if len(v) >= 2}
 
 
-def _debug_dynamic(experiments):
+def _group_dynamic_by_range(experiments, ablation_map):
+    """
+    Split dynamic experiments into groups by number of unique traffic profiles
+    (traffic range) and by reward type from ablation_map.
+
+    Returns:
+        {'range_3': {rtype: exp, ...}, 'range_5': {rtype: exp, ...}}
+        or None if ablation_map is empty/None (ablation figures skipped).
+    """
+    if not ablation_map:
+        print("  ⚠️  No ablation_map provided — skipping ablation figure")
+        return None
+
+    dynamic_exps = [e for e in experiments if e['category'] == 'dynamic']
+
+    range_groups = {}
+    unrecognised = []
+
+    for exp in dynamic_exps:
+        rtype = ablation_map.get(exp['run_name'])
+        if rtype is None:
+            unrecognised.append(exp['run_name'])
+            continue
+        n_profiles = len(set(exp['scenario'].values()))
+        range_groups.setdefault(n_profiles, {})
+        # First experiment seen for each (n_profiles, rtype) wins
+        if rtype not in range_groups[n_profiles]:
+            range_groups[n_profiles][rtype] = exp
+
+    if unrecognised:
+        print(f"  ⚠️  The following dynamic run_names are not in ablation_map:")
+        for name in unrecognised:
+            print(f"       {name}")
+
+    # Map to the two named groups using the two smallest distinct range sizes
+    sorted_ranges = sorted(range_groups.keys())
+    if len(sorted_ranges) < 2:
+        print(f"  ⚠️  Need dynamic experiments with at least 2 distinct traffic ranges, "
+              f"found: {sorted_ranges}")
+        return None
+
+    return {
+        'range_3': range_groups[sorted_ranges[0]],
+        'range_5': range_groups[sorted_ranges[1]],
+    }
+
+
+def _debug_dynamic(experiments, ablation_map):
     print("\n  Available dynamic experiments:")
     for exp in experiments:
         if exp['category'] == 'dynamic':
             n = len(set(exp['scenario'].values()))
             has_s = 'dti_beta_slice0' in exp['data']
-            print(f"    - {exp['run_name']}: {n} profiles, per_slice={has_s}")
+            rtype = ablation_map.get(exp['run_name'], '⚠️  NOT IN MAP')
+            print(f"    - {exp['run_name']}: {n} profiles, "
+                  f"per_slice={has_s}, reward_type={rtype}")
+
+
+def _debug_ablation(exps, ablation_map):
+    print("  Experiments and their ablation_map entries:")
+    for exp in exps:
+        rtype = ablation_map.get(exp['run_name'], '⚠️  NOT IN MAP')
+        print(f"    {exp['run_name']} → {rtype}  (scenario: {exp['scenario_str']})")

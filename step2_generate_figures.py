@@ -2,22 +2,37 @@
 step2_generate_figures.py — Entry point for figure and table generation.
 
 Usage:
-    python3 step2_generate_figures.py --data extracted_data.json \\
-                                      --output-dir ./paper_figures
+    python3 step2_generate_figures.py \\
+        --data extracted_data.json \\
+        --output-dir ./paper_figures
 
-Optional:
-    --baseline-dir  ./baseline_results   Directory with baseline JSON files
-    --include-baselines                  Add baseline bars to figures 2 & 3
-    --debug                              Print experiment details and exit
+The reward_formulation field is read directly from the JSON produced by step1
+(experiments[i]['reward_formulation']).  No --ablation-map file is needed.
+
+Optional overrides:
+    --ablation-map  ablation_map.json
+        Explicit JSON mapping run_name -> reward-type label.  Overrides the
+        values read from the data file.  Use only if step1 data is missing the
+        reward_formulation field (e.g. data extracted with an older step1).
+
+    --baseline-dir  ./baseline_results
+        Directory with baseline JSON files.
+
+    --include-baselines
+        Add baseline bars to figures 2 & 3 and comparison tables.
+
+    --debug
+        Print experiment details and exit.
 """
 
 import os
+import json
 import argparse
 
-# Apply global style before any figure module imports pyplot
-import plot_style  # noqa: F401  (side-effect: sets rcParams)
+import plot_style  # noqa: F401  (side-effect: applies rcParams)
 
 from data_utils import load_extracted_data, load_baseline_results, categorize_experiments
+from figures_dynamic import _build_ablation_map_from_data
 from figures_static import (
     fig1_training_convergence,
     fig2_static_homogeneous,
@@ -46,28 +61,52 @@ from tables import (
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='Generate figures from extracted data')
+    parser = argparse.ArgumentParser(
+        description='Generate figures and tables from extracted data')
     parser.add_argument('--data', default='extracted_data.json',
-                        help='Extracted data JSON file')
+                        help='JSON file produced by step1')
     parser.add_argument('--output-dir', default='./paper_figures',
-                        help='Output directory for figures')
+                        help='Output directory')
     parser.add_argument('--baseline-dir', default='./baseline_results',
-                        help='Directory containing baseline JSON files')
+                        help='Baseline JSON files directory')
     parser.add_argument('--include-baselines', action='store_true',
-                        help='Include baseline comparisons in figures')
+                        help='Include baseline comparisons')
+    parser.add_argument('--ablation-map', default=None, dest='ablation_map',
+                        help='Optional JSON override: run_name -> reward-type label')
     parser.add_argument('--debug', action='store_true',
-                        help='Print debug information and exit')
+                        help='Print experiment details and exit')
     return parser.parse_args()
 
 
-def _debug_print(experiments, baseline_data):
+def _load_ablation_map_override(path):
+    if not path:
+        return {}
+    if not os.path.exists(path):
+        print(f"  Warning: --ablation-map file not found: {path}")
+        return {}
+    with open(path, 'r') as f:
+        mapping = json.load(f)
+    print(f"  Loaded ablation-map override: {len(mapping)} entries from {path}")
+    return mapping
+
+
+def _debug_print(experiments, baseline_data, ablation_map):
     for i, exp in enumerate(experiments):
         print(f"\n[{i+1}] {exp['run_name']}")
-        print(f"  Category: {exp['category']}")
-        print(f"  Scenario: {exp['scenario']}")
-        print(f"  Data keys: {list(exp['data'].keys())}")
+        print(f"  category:             {exp['category']}")
+        print(f"  scenario_str:         {exp['scenario_str']}")
+        print(f"  scenario:             {exp['scenario']}")
+        print(f"  slice_labels:         {exp.get('slice_labels')}")
+        print(f"  qos_metrics:          {exp.get('qos_metrics')}")
+        print(f"  thresholds:           {exp.get('thresholds')}")
+        print(f"  reward_formulation:   {exp.get('reward_formulation')}")
+        print(f"  slice_weights:        {exp.get('slice_weights')}")
+        print(f"  dynamic_profile_set:  {exp.get('dynamic_profile_set')}")
+        print(f"  dynamic_change_period:{exp.get('dynamic_change_period')}")
+        print(f"  ablation_map entry:   {ablation_map.get(exp['run_name'], 'not in map')}")
+        print(f"  data keys:            {list(exp['data'].keys())}")
         if exp['run_name'] in baseline_data:
-            print(f"  Baselines: {list(baseline_data[exp['run_name']].keys())}")
+            print(f"  baselines:            {list(baseline_data[exp['run_name']].keys())}")
 
 
 def main():
@@ -75,7 +114,7 @@ def main():
     os.makedirs(args.output_dir, exist_ok=True)
 
     print("=" * 80)
-    print("STEP 2: GENERATING FIGURES")
+    print("STEP 2: GENERATING FIGURES AND TABLES")
     print("=" * 80)
 
     data = load_extracted_data(args.data)
@@ -85,9 +124,21 @@ def main():
     if args.include_baselines:
         baseline_data = load_baseline_results(args.baseline_dir, experiments)
 
+    # Build ablation map: start from data, then apply any explicit override
+    ablation_map = _build_ablation_map_from_data(experiments)
+    override = _load_ablation_map_override(args.ablation_map)
+    ablation_map.update(override)
+
+    recognised = sum(1 for e in experiments
+                     if e['run_name'] in ablation_map)
+    print(f"\n  Ablation map: {recognised}/{len(experiments)} experiments "
+          f"have a reward_formulation label")
+    if recognised == 0:
+        print("  Ablation figures and tables will be skipped.")
+
     if args.debug:
         print("\nDEBUG MODE:")
-        _debug_print(experiments, baseline_data)
+        _debug_print(experiments, baseline_data, ablation_map)
         return
 
     exps_by_cat = categorize_experiments(experiments)
@@ -119,12 +170,13 @@ def main():
     fig_episode_per_slice_beta(experiments, args.output_dir, episode=160)
 
     # ---- Ablation figures ----
-    print("\n" + "=" * 80)
-    print("ABLATION FIGURES")
-    print("=" * 80)
-    fig_ablation_reward_formulation_robust(experiments, args.output_dir)
-    fig_dynamic_ablation_comparison(experiments, args.output_dir)
-    fig_dynamic_ablation_bar_chart(experiments, args.output_dir)
+    if ablation_map:
+        print("\n" + "=" * 80)
+        print("ABLATION FIGURES")
+        print("=" * 80)
+        fig_ablation_reward_formulation_robust(experiments, args.output_dir, ablation_map)
+        fig_dynamic_ablation_comparison(experiments, args.output_dir, ablation_map)
+        fig_dynamic_ablation_bar_chart(experiments, args.output_dir, ablation_map)
 
     # ---- Tables ----
     print("\n" + "=" * 80)
@@ -134,29 +186,17 @@ def main():
         generate_latex_table_static_homogeneous(exps_by_cat, baseline_data, args.output_dir)
         generate_latex_table_heterogeneous(exps_by_cat, baseline_data, args.output_dir)
     else:
-        print("  ⚠️  No baseline data — skipping comparison tables")
+        print("  No baseline data -- skipping comparison tables")
     generate_summary_table(experiments, args.output_dir)
     generate_per_slice_beta_table(experiments, args.output_dir)
-    generate_ablation_table(experiments, args.output_dir)
-    generate_dynamic_ablation_table(experiments, args.output_dir)
+    if ablation_map:
+        generate_ablation_table(experiments, args.output_dir, ablation_map)
+        generate_dynamic_ablation_table(experiments, args.output_dir, ablation_map)
 
     print("\n" + "=" * 80)
-    print("✓ COMPLETE")
+    print("COMPLETE")
     print("=" * 80)
-    print(f"\nOutput directory: {args.output_dir}")
-    print("\nFigures generated:")
-    print("  Training:   fig1a–fig1d")
-    print("  Static:     fig2, fig3, fig4")
-    print("  Dynamic:    fig5a–fig5f3")
-    print("  Per-slice:  fig_per_slice_beta_training, fig_fairness_evolution,")
-    print("              fig_slice_beta_boxplot, fig5_ep80/ep160_per_slice_beta")
-    print("  Ablation:   fig_ablation_reward_robust, fig_dynamic_ablation_*")
-    print("  Actor loss: fig_actor_loss_comparison")
-    print("\nTables generated:")
-    print("  summary_table.tex, table_per_slice_beta.tex,")
-    print("  table_ablation_results.tex, table_dynamic_ablation.tex")
-    if baseline_data:
-        print("  table_static_homogeneous.tex, table_heterogeneous.tex")
+    print(f"\nOutput: {args.output_dir}")
 
 
 if __name__ == "__main__":

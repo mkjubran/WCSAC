@@ -297,67 +297,56 @@ def fig3_heterogeneous(exps_by_cat, baseline_data, output_dir):
 # Figure 4: Static Allocation Patterns
 # ---------------------------------------------------------------------------
 
-_TARGET_SCENARIOS = [
-    ('Low-High', ['low', 'high']),
-    ('Extremely_Low-Extremely_High', ['extremely', 'low', 'high']),
-    ('Medium-High', ['medium', 'high']),
+# Colour pairs (slice 0, slice 1) cycled across however many scenarios are present
+_BOX_COLOR_PAIRS = [
+    ('steelblue',    'lightsteelblue'),
+    ('coral',        'lightcoral'),
+    ('seagreen',     'lightgreen'),
+    ('mediumpurple', 'plum'),
+    ('goldenrod',    'moccasin'),
 ]
-
-_SCENARIO_COLORS = {
-    'Low-High':                      ['steelblue',  'lightsteelblue'],
-    'Extremely_Low-Extremely_High':  ['coral',      'lightcoral'],
-    'Medium-High':                   ['seagreen',   'lightgreen'],
-}
 
 
 def fig4_allocation_patterns(experiments, output_dir):
     """
-    Box plots for allocation distribution across multiple heterogeneous scenarios
-    (episode 80).  All box plots appear in a single axis.
+    Box plots for allocation distribution across ALL static heterogeneous
+    scenarios that have episode-80 allocation data (ep80_action_slice0/1).
+
+    Scenarios are plotted in the order they appear in the experiments list.
+    No hardcoded scenario names or keyword matching is used — every
+    heterogeneous experiment with the required keys is included automatically.
     """
     print("\n[Figure 4] Allocation Patterns (Multiple Scenarios)...")
 
-    found = {}
-    for exp in experiments:
-        if exp['category'] != 'static_heterogeneous':
-            continue
-        norm = exp['scenario_str'].lower().replace('_', '').replace('-', '').replace(' ', '')
-        for tname, keywords in _TARGET_SCENARIOS:
-            kws = [k.replace('_', '').replace('-', '') for k in keywords]
-            if not all(k in norm for k in kws):
-                continue
-            if tname == 'Extremely_Low-Extremely_High' and norm.count('extremely') < 2:
-                continue
-            if tname == 'Low-High' and ('extremely' in norm or 'medium' in norm):
-                continue
-            if tname == 'Medium-High' and 'extremely' in norm:
-                continue
-            if tname not in found:
-                found[tname] = exp
-                print(f"  ✓ Matched '{tname}': {exp['scenario_str']}")
-            break
+    eligible = [
+        exp for exp in experiments
+        if exp['category'] == 'static_heterogeneous'
+        and 'ep80_action_slice0' in exp['data']
+        and 'ep80_action_slice1' in exp['data']
+    ]
 
-    if not found:
-        print("  ⚠️  No matching heterogeneous scenarios found")
+    if not eligible:
+        print("  ⚠️  No static_heterogeneous experiments with ep80 allocation data found")
+        print("      Available heterogeneous experiments:")
         for exp in experiments:
             if exp['category'] == 'static_heterogeneous':
-                print(f"        - {exp['scenario_str']}")
+                has = 'ep80_action_slice0' in exp['data']
+                print(f"        - {exp['scenario_str']}: has_ep80={has}")
         return
 
     all_data, all_labels, all_colors = [], [], []
-    for tname, exp in found.items():
-        pair_colors = _SCENARIO_COLORS.get(tname, ['gray', 'lightgray'])
+    for i, exp in enumerate(eligible):
+        pair   = _BOX_COLOR_PAIRS[i % len(_BOX_COLOR_PAIRS)]
+        sname  = exp['scenario_str']
+        labels = exp.get('slice_labels', [])
+        print(f"  ✓ Including '{sname}'")
         for idx, key in enumerate(['ep80_action_slice0', 'ep80_action_slice1']):
-            if key in exp['data']:
-                all_data.append(exp['data'][key]['values'])
-                all_labels.append(f'{tname}\nSlice {idx}')
-                all_colors.append(pair_colors[idx])
+            slice_name = labels[idx] if idx < len(labels) else f'Slice {idx}'
+            all_data.append(exp['data'][key]['values'])
+            all_labels.append(f'{sname}\n{slice_name}')
+            all_colors.append(pair[idx])
 
-    if not all_data:
-        print("  ⚠️  No allocation data found")
-        return
-
-    fig, ax = plt.subplots(figsize=(14, 6))
+    fig, ax = plt.subplots(figsize=(max(10, len(all_data) * 1.5), 6))
     bp = ax.boxplot(all_data, labels=all_labels, patch_artist=True,
                     boxprops=dict(alpha=0.7),
                     medianprops=dict(color='red', linewidth=2),
@@ -376,4 +365,4 @@ def fig4_allocation_patterns(experiments, output_dir):
                 dpi=FIGURE_DPI, bbox_inches='tight')
     plt.close()
     print(f"  ✓ fig4_allocation_patterns.{FIGURE_FORMAT} "
-          f"({len(found)} scenarios, {len(all_data)} box plots)")
+          f"({len(eligible)} scenarios, {len(all_data)} box plots)")
