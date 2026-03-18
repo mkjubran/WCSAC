@@ -12,7 +12,7 @@ tables.py — LaTeX table generation.
 import os
 import numpy as np
 
-from plot_style import BASELINE_NAMES, LOAD_ORDER
+from plot_style import BASELINE_NAMES, LOAD_ORDER, abbrev_profile, abbrev_scenario_str
 from data_utils import compute_per_slice_stats, collect_baseline_vectors
 
 
@@ -77,7 +77,7 @@ def generate_latex_table_static_homogeneous(exps_by_cat, baseline_data, output_d
 
     rows = []
     for exp in exps:
-        profile = list(exp['scenario'].values())[0].replace('_', ' ').title()
+        profile = abbrev_profile(list(exp['scenario'].values())[0])
         sac_str = _beta_str(exp['statistics'].get('beta'))
         bl_betas, bl_stds = collect_baseline_vectors(exp, baseline_data, BASELINE_NAMES)
 
@@ -139,7 +139,7 @@ def generate_latex_table_heterogeneous(exps_by_cat, baseline_data, output_dir):
             bl_strs[name] = rf"{bv:.4f} $\pm$ {sv:.4f}" if (bv is not None and sv is not None) else 'N/A'
 
         rows.append({
-            'scenario': exp['scenario_str'],
+            'scenario': abbrev_scenario_str(exp['scenario_str']),
             'sac': sac_str,
             **{name: bl_strs[name] for name in BASELINE_NAMES},
         })
@@ -186,7 +186,7 @@ def generate_summary_table(experiments, output_dir):
         reward_str = rf"{rm:.2f} $\pm$ {rs:.2f}" if (rm and rs) else 'N/A'
         rf_label   = exp.get('reward_formulation', 'N/A')
 
-        rows.append((exp['scenario_str'], beta_str, reward_str, rf_label))
+        rows.append((abbrev_scenario_str(exp['scenario_str']), beta_str, reward_str, rf_label))
 
     latex = (
         r"\begin{table*}[!t]" + "\n"
@@ -468,7 +468,7 @@ def generate_dynamic_ablation_table(experiments, output_dir, ablation_map):
         sample_exp  = next(iter(range_groups[sz].values()))
         pool        = sample_exp.get('dynamic_profile_set', [])
         period      = sample_exp.get('dynamic_change_period')
-        pool_str    = ', '.join(p.title() for p in pool)
+        pool_str    = abbrev_profile(pool)
         period_str  = f', T={period}' if period else ''
         range_label = f'[{pool_str}]{period_str}'
         n_rtypes    = len(all_rtypes)

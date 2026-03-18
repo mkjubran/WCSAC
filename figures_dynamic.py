@@ -25,6 +25,7 @@ from matplotlib.patches import Patch
 from plot_style import (
     FIGURE_DPI, FIGURE_FORMAT,
     COLOR_BETA, LABEL_BETA, LABEL_DTI, LABEL_RBS, LABEL_EPISODE,
+    abbrev_profile,
 )
 
 _PROFILE_NAMES = {
@@ -72,7 +73,7 @@ def fig5_dynamic_scenarios(exps_by_cat, output_dir):
         data   = exp['data']
         pool   = exp.get('dynamic_profile_set', [])
         period = exp.get('dynamic_change_period')
-        pool_str   = f"[{', '.join(pool)}]" if pool else ''
+        pool_str   = f"[{abbrev_profile(pool)}]" if pool else ''
         period_str = f", T={period} DTIs" if period else ''
         print(f"\n  Processing: {exp['run_name']} — {exp['scenario_str']}{pool_str}{period_str}")
 
@@ -557,7 +558,7 @@ def fig_dynamic_ablation_comparison(experiments, output_dir, ablation_map):
             color     = rtype_colors[rtype]
             slabels   = exp.get('slice_labels', [])
             pool      = exp.get('dynamic_profile_set', [])
-            pool_str  = f"[{', '.join(p.title() for p in pool)}]" if pool else exp['scenario_str']
+            pool_str  = f"[{abbrev_profile(pool)}]" if pool else exp['scenario_str']
 
             if 'dti_beta' in data:
                 steps = np.array(data['dti_beta']['steps'])
@@ -609,7 +610,7 @@ def fig_dynamic_ablation_bar_chart(experiments, output_dir, ablation_map):
     for range_dict in [r3, r5]:
         sample = next(iter(range_dict.values()))
         pool   = sample.get('dynamic_profile_set', [])
-        pool_str = f"[{', '.join(p.title() for p in pool)}]" if pool else sample['scenario_str']
+        pool_str = f"[{abbrev_profile(pool)}]" if pool else sample['scenario_str']
         for rt in all_rtypes:
             exp = range_dict.get(rt)
             bar_labels.append(f'{pool_str}\n{rt.capitalize()}')

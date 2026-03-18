@@ -17,6 +17,8 @@ from plot_style import (
     BASELINE_COLORS, BASELINE_NAMES,
     LABEL_BETA, LABEL_REWARD, LABEL_EPISODE, LABEL_RBS,
     LOAD_ORDER,
+    abbrev_profile,
+    abbrev_scenario_str,
 )
 from data_utils import collect_baseline_vectors
 
@@ -119,7 +121,7 @@ def fig1_training_convergence(experiments, output_dir):
 
     dyn_exp = dynamic_exps[0]
     pool    = dyn_exp.get('dynamic_profile_set', [])
-    pool_str = f" [{', '.join(pool)}]" if pool else ''
+    pool_str = f" [{abbrev_profile(pool)}]" if pool else ''
 
     if 'episode_reward' in dyn_exp['data']:
         _single_timeseries(
@@ -149,7 +151,7 @@ def _bar_chart_metric(sorted_exps, metric, ylabel, title, color, out_path, label
         val = stats.get('last_100_mean', stats.get('mean'))
         std = stats.get('last_100_std', stats.get('std'))
         if val is not None and std is not None:
-            profiles.append(list(exp['scenario'].values())[0].replace('_', ' ').title())
+            profiles.append(abbrev_profile(list(exp['scenario'].values())[0]))
             vals.append(val)
             stds.append(std)
 
@@ -221,7 +223,7 @@ def fig2_static_homogeneous(exps_by_cat, baseline_data, output_dir):
         if val is None or std is None:
             continue
 
-        profiles.append(list(exp['scenario'].values())[0].replace('_', ' ').title())
+        profiles.append(abbrev_profile(list(exp['scenario'].values())[0]))
         sac_betas.append(val)
         sac_stds.append(std)
 
@@ -301,7 +303,7 @@ def fig3_heterogeneous(exps_by_cat, baseline_data, output_dir):
         if val is None or std is None:
             continue
 
-        scenarios.append(exp['scenario_str'])
+        scenarios.append(abbrev_scenario_str(exp['scenario_str']))
         sac_betas.append(val)
         sac_stds.append(std)
 
@@ -406,7 +408,7 @@ def fig4_allocation_patterns(experiments, output_dir):
         for idx, key in enumerate(['ep80_action_slice0', 'ep80_action_slice1']):
             slice_name = labels[idx] if idx < len(labels) else f'Slice {idx}'
             all_data.append(exp['data'][key]['values'])
-            all_labels.append(f'{sname}\n{slice_name}')
+            all_labels.append(f'{abbrev_scenario_str(sname)}\n{slice_name}')
             all_colors.append(pair[idx])
 
     fig, ax = plt.subplots(figsize=(max(10, len(all_data) * 1.5), 6))
