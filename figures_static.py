@@ -66,15 +66,26 @@ def _plot_grouped_bars(ax, x_pos, profiles, sac_vals, sac_stds,
 
 def fig1_training_convergence(experiments, output_dir):
     """
-    fig1a — Reward bar chart (static homogeneous, last-100 mean).
-    fig1b — Beta bar chart  (static homogeneous, last-100 mean).
-    fig1c — Dynamic reward time-series (single axis).
-    fig1d — Dynamic beta time-series  (single axis).
+    fig1a — Reward bar chart (static homogeneous, global reward, last-100 mean).
+    fig1b — Beta bar chart   (static homogeneous, global reward, last-100 mean).
+    fig1c — Dynamic reward time-series (global reward, single axis).
+    fig1d — Dynamic beta time-series   (global reward, single axis).
+
+    Only global-reward experiments are shown so the figure represents the
+    baseline training behaviour before the ablation comparison.
     """
     print("\n[Figure 1] Training Convergence...")
 
-    homogeneous_exps = [e for e in experiments if e['category'] == 'static_homogeneous']
-    dynamic_exps = [e for e in experiments if e['category'] == 'dynamic']
+    homogeneous_exps = [
+        e for e in experiments
+        if e['category'] == 'static_homogeneous'
+        and e.get('reward_formulation', 'global') == 'global'
+    ]
+    dynamic_exps = [
+        e for e in experiments
+        if e['category'] == 'dynamic'
+        and e.get('reward_formulation', 'global') == 'global'
+    ]
 
     sorted_exps = sorted(
         homogeneous_exps,
@@ -101,23 +112,30 @@ def fig1_training_convergence(experiments, output_dir):
         label_key='fig1b',
     )
 
-    # ---- 1c: Dynamic reward time-series ----
-    if dynamic_exps and 'episode_reward' in dynamic_exps[0]['data']:
+    # ---- 1c/1d: Dynamic time-series — use first global-reward dynamic exp ----
+    if not dynamic_exps:
+        print("  ℹ️  No global-reward dynamic experiments for fig1c/1d")
+        return
+
+    dyn_exp = dynamic_exps[0]
+    pool    = dyn_exp.get('dynamic_profile_set', [])
+    pool_str = f" [{', '.join(pool)}]" if pool else ''
+
+    if 'episode_reward' in dyn_exp['data']:
         _single_timeseries(
-            data=dynamic_exps[0]['data']['episode_reward'],
+            data=dyn_exp['data']['episode_reward'],
             xlabel=LABEL_EPISODE, ylabel=LABEL_REWARD,
-            title='Training Convergence (Dynamic): Episode Reward',
+            title=f'Training Convergence (Dynamic{pool_str}): Episode Reward',
             color=COLOR_REWARD,
             out_path=os.path.join(output_dir, f'fig1c_dynamic_reward.{FIGURE_FORMAT}'),
             label='fig1c',
         )
 
-    # ---- 1d: Dynamic beta time-series ----
-    if dynamic_exps and 'episode_beta' in dynamic_exps[0]['data']:
+    if 'episode_beta' in dyn_exp['data']:
         _single_timeseries(
-            data=dynamic_exps[0]['data']['episode_beta'],
+            data=dyn_exp['data']['episode_beta'],
             xlabel=LABEL_EPISODE, ylabel=LABEL_BETA,
-            title='Training Convergence (Dynamic): QoS Performance',
+            title=f'Training Convergence (Dynamic{pool_str}): QoS Performance',
             color=COLOR_BETA,
             out_path=os.path.join(output_dir, f'fig1d_dynamic_beta.{FIGURE_FORMAT}'),
             label='fig1d',
@@ -175,20 +193,26 @@ def _single_timeseries(data, xlabel, ylabel, title, color, out_path, label):
 # ---------------------------------------------------------------------------
 
 def fig2_static_homogeneous(exps_by_cat, baseline_data, output_dir):
-    """Bar chart of beta across homogeneous traffic profiles (+ baselines)."""
+    """
+    Bar chart of beta across homogeneous traffic profiles (+ baselines where available).
+
+    Only global-reward experiments are shown so the figure is directly
+    comparable to the baseline methods.
+    """
     print("\n[Figure 2] Static Homogeneous Performance...")
 
     exps = sorted(
-        exps_by_cat['static_homogeneous'],
+        [e for e in exps_by_cat['static_homogeneous']
+         if e.get('reward_formulation', 'global') == 'global'],
         key=lambda e: LOAD_ORDER.get(list(e['scenario'].values())[0], 999),
     )
     if not exps:
-        print("  ⚠️  No homogeneous experiments")
+        print("  ⚠️  No homogeneous experiments with reward_formulation='global'")
         return
 
     profiles, sac_betas, sac_stds = [], [], []
     bl_betas = {name: [] for name in BASELINE_NAMES}
-    bl_stds = {name: [] for name in BASELINE_NAMES}
+    bl_stds  = {name: [] for name in BASELINE_NAMES}
 
     for exp in exps:
         stats = exp['statistics'].get('beta', {})
@@ -206,9 +230,21 @@ def fig2_static_homogeneous(exps_by_cat, baseline_data, output_dir):
             bl_betas[name].append(betas[name])
             bl_stds[name].append(stds[name])
 
+        if exp['run_name'] not in baseline_data:
+            print(f"  ℹ️  No baseline found for '{exp['run_name']}' — SAC bar only")
+
     if not profiles:
         print("  ⚠️  No valid data")
         return
+
+    has_any_baseline = any(
+        any(v is not None for v in bl_betas[name]) for name in BASELINE_NAMES
+    )
+    if not has_any_baseline and baseline_data:
+        print(f"  ⚠️  Baseline data loaded ({len(baseline_data)} entries) but "
+              f"none matched homogeneous run_names.")
+        print(f"       Loaded baseline keys:    {sorted(baseline_data.keys())}")
+        print(f"       Homogeneous run_names:   {[e['run_name'] for e in exps]}")
 
     fig, ax = plt.subplots(figsize=(12, 6))
     x_pos = np.arange(len(profiles))
@@ -238,17 +274,25 @@ def fig2_static_homogeneous(exps_by_cat, baseline_data, output_dir):
 # ---------------------------------------------------------------------------
 
 def fig3_heterogeneous(exps_by_cat, baseline_data, output_dir):
-    """Bar chart for heterogeneous scenarios (+ baselines)."""
+    """
+    Bar chart for heterogeneous scenarios (+ baselines where available).
+
+    Only experiments whose run_name matches a key in baseline_data will have
+    baseline bars.  Experiments without baseline data are plotted as SAC-only
+    bars alongside the grouped bars so the figure is never silently incomplete.
+    A diagnostic is printed for any experiment missing baseline data.
+    """
     print("\n[Figure 3] Heterogeneous Performance...")
 
-    exps = exps_by_cat['static_heterogeneous']
+    exps = [e for e in exps_by_cat['static_heterogeneous']
+            if e.get('reward_formulation', 'global') == 'global']
     if not exps:
         print("  ⚠️  No heterogeneous experiments")
         return
 
     scenarios, sac_betas, sac_stds = [], [], []
     bl_betas = {name: [] for name in BASELINE_NAMES}
-    bl_stds = {name: [] for name in BASELINE_NAMES}
+    bl_stds  = {name: [] for name in BASELINE_NAMES}
 
     for exp in exps:
         stats = exp['statistics'].get('beta', {})
@@ -266,9 +310,25 @@ def fig3_heterogeneous(exps_by_cat, baseline_data, output_dir):
             bl_betas[name].append(betas[name])
             bl_stds[name].append(stds[name])
 
+        # Diagnostic: warn if this experiment has no baseline match
+        if exp['run_name'] not in baseline_data:
+            print(f"  ℹ️  No baseline found for '{exp['run_name']}' "
+                  f"(reward={exp.get('reward_formulation', '?')}) — SAC bar only")
+
     if not scenarios:
         print("  ⚠️  No valid data")
         return
+
+    # If no baseline data was matched at all, print the available baseline keys
+    has_any_baseline = any(
+        any(v is not None for v in bl_betas[name]) for name in BASELINE_NAMES
+    )
+    if not has_any_baseline and baseline_data:
+        print(f"  ⚠️  Baseline data was loaded ({len(baseline_data)} entries) but "
+              f"none matched the heterogeneous run_names.")
+        print(f"       Loaded baseline keys:       {sorted(baseline_data.keys())}")
+        print(f"       Heterogeneous run_names:    "
+              f"{[e['run_name'] for e in exps]}")
 
     fig, ax = plt.subplots(figsize=(12, 6))
     x_pos = np.arange(len(scenarios))
@@ -321,17 +381,20 @@ def fig4_allocation_patterns(experiments, output_dir):
     eligible = [
         exp for exp in experiments
         if exp['category'] == 'static_heterogeneous'
+        and exp.get('reward_formulation', 'global') == 'global'
         and 'ep80_action_slice0' in exp['data']
         and 'ep80_action_slice1' in exp['data']
     ]
 
     if not eligible:
-        print("  ⚠️  No static_heterogeneous experiments with ep80 allocation data found")
+        print("  ⚠️  No static_heterogeneous experiments with reward_formulation='global' "
+              "and ep80 allocation data found")
         print("      Available heterogeneous experiments:")
         for exp in experiments:
             if exp['category'] == 'static_heterogeneous':
                 has = 'ep80_action_slice0' in exp['data']
-                print(f"        - {exp['scenario_str']}: has_ep80={has}")
+                rf  = exp.get('reward_formulation', '?')
+                print(f"        - {exp['scenario_str']}: has_ep80={has}, reward={rf}")
         return
 
     all_data, all_labels, all_colors = [], [], []

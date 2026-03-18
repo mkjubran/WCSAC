@@ -44,18 +44,25 @@ _PROFILE_NAMES = {
 
 def fig5_dynamic_scenarios(exps_by_cat, output_dir):
     """
-    Generate all dynamic scenario figures (5a–5f3) for every dynamic experiment.
+    Generate all dynamic scenario figures (5a–5f3).
 
-    When there is only one dynamic experiment the output filenames use the
-    standard fig5* scheme.  When there are multiple, a short suffix derived
-    from the experiment's run_name is appended so files don't overwrite each
-    other (e.g. fig5a_dynamic_beta__run_xyz.png).
+    Only experiments with reward_formulation == 'global' are used, so that
+    figure 5 shows the baseline (global β) training behaviour.  Ablation
+    comparisons are handled separately by fig_dynamic_ablation_*.
+
+    When there is more than one qualifying experiment a short suffix derived
+    from run_name is appended to filenames so outputs don't overwrite each other.
     """
     print("\n[Figure 5] Dynamic Scenarios...")
 
-    exps = exps_by_cat['dynamic']
+    all_dynamic = exps_by_cat['dynamic']
+    exps = [e for e in all_dynamic
+            if e.get('reward_formulation', 'global') == 'global']
+
     if not exps:
-        print("  ⚠️  No dynamic experiments")
+        print("  ⚠️  No dynamic experiments with reward_formulation='global'")
+        print(f"       All dynamic runs: "
+              f"{[(e['run_name'], e.get('reward_formulation')) for e in all_dynamic]}")
         return
 
     multi = len(exps) > 1
@@ -507,11 +514,10 @@ def fig_slice_beta_boxplot(experiments, output_dir):
 
 def fig_dynamic_ablation_comparison(experiments, output_dir, ablation_map):
     """
-    2×2 subplots: traffic-range × reward-type.
+    Subplot grid: traffic-range (rows) × reward-type (columns).
 
-    ablation_map: dict mapping run_name → reward-type label (e.g. 'global'/'uniform').
-    Experiments are grouped first by the number of unique profiles in their
-    scenario (traffic range), then by their reward type from ablation_map.
+    The grid size is determined by the data — N_ranges × N_reward_types.
+    Reward-type keys come from ablation_map, not hardcoded strings.
     """
     print("\n[Figure] Dynamic Scenarios Ablation...")
 
@@ -520,43 +526,58 @@ def fig_dynamic_ablation_comparison(experiments, output_dir, ablation_map):
         return
 
     r3, r5 = groups['range_3'], groups['range_5']
+    all_rtypes = sorted(set(list(r3.keys()) + list(r5.keys())))
 
-    if not all(r3.values()) or not all(r5.values()):
-        print("  ⚠️  Missing experiments for complete comparison")
-        _debug_dynamic(experiments, ablation_map)
+    if not all_rtypes:
+        print("  ⚠️  No reward types found in groups")
         return
 
-    # Derive axis titles from actual scenario_str values
-    def _title(exp, reward_label):
-        return f'{exp["scenario_str"]} — {reward_label.capitalize()} Reward'
+    # Colour palette: cycle through a small set per reward type
+    rtype_colors = {}
+    palette = ['steelblue', 'coral', 'seagreen', 'goldenrod']
+    for i, rt in enumerate(all_rtypes):
+        rtype_colors[rt] = palette[i % len(palette)]
 
-    fig, axes = plt.subplots(2, 2, figsize=(16, 10))
-    combos = [
-        (axes[0, 0], r3['global'],  _title(r3['global'],  'global'),  'steelblue'),
-        (axes[0, 1], r3['uniform'], _title(r3['uniform'], 'uniform'), 'coral'),
-        (axes[1, 0], r5['global'],  _title(r5['global'],  'global'),  'steelblue'),
-        (axes[1, 1], r5['uniform'], _title(r5['uniform'], 'uniform'), 'coral'),
-    ]
+    n_cols = len(all_rtypes)
+    fig, axes = plt.subplots(2, n_cols, figsize=(8 * n_cols, 10), squeeze=False)
 
-    for ax, exp, title, color in combos:
-        data = exp['data']
-        if 'dti_beta' in data:
-            steps = np.array(data['dti_beta']['steps'])
-            ax.plot(steps, np.array(data['dti_beta']['values']),
-                    color=color, alpha=0.7, linewidth=1.5, label='Global β')
-            for skey, sc in [('dti_beta_slice0', 'lightskyblue'),
-                              ('dti_beta_slice1', 'lightcoral')]:
-                if skey in data:
-                    sidx = skey.split('slice')[-1]
-                    ax.plot(steps, np.array(data[skey]['values']),
-                            color=sc, alpha=0.5, linewidth=1, linestyle='--',
-                            label=f'β{sidx}')
-        ax.set_xlabel('DTI', fontsize=11)
-        ax.set_ylabel('β', fontsize=11)
-        ax.set_title(title, fontsize=12, fontweight='bold')
-        ax.legend(loc='best', fontsize=9)
-        ax.grid(True, alpha=0.3)
-        ax.set_ylim([0, 1.05])
+    for row_idx, (range_key, range_dict) in enumerate([('range_3', r3),
+                                                        ('range_5', r5)]):
+        for col_idx, rtype in enumerate(all_rtypes):
+            ax  = axes[row_idx][col_idx]
+            exp = range_dict.get(rtype)
+
+            if exp is None:
+                ax.text(0.5, 0.5, 'No data', ha='center', va='center',
+                        transform=ax.transAxes, fontsize=12, color='gray')
+                ax.set_axis_off()
+                continue
+
+            data      = exp['data']
+            color     = rtype_colors[rtype]
+            slabels   = exp.get('slice_labels', [])
+            pool      = exp.get('dynamic_profile_set', [])
+            pool_str  = f"[{', '.join(p.title() for p in pool)}]" if pool else exp['scenario_str']
+
+            if 'dti_beta' in data:
+                steps = np.array(data['dti_beta']['steps'])
+                ax.plot(steps, np.array(data['dti_beta']['values']),
+                        color=color, alpha=0.7, linewidth=1.5, label='Global β')
+                for k, sc in enumerate(['lightskyblue', 'lightcoral']):
+                    skey = f'dti_beta_slice{k}'
+                    if skey in data:
+                        sname = slabels[k] if k < len(slabels) else f'Slice {k}'
+                        ax.plot(steps, np.array(data[skey]['values']),
+                                color=sc, alpha=0.5, linewidth=1, linestyle='--',
+                                label=f'{sname} β')
+
+            ax.set_xlabel('DTI', fontsize=11)
+            ax.set_ylabel('β', fontsize=11)
+            ax.set_title(f'{pool_str} — {rtype.capitalize()} Reward',
+                         fontsize=11, fontweight='bold')
+            ax.legend(loc='best', fontsize=9)
+            ax.grid(True, alpha=0.3)
+            ax.set_ylim([0, 1.05])
 
     plt.suptitle('Dynamic Traffic Adaptation: Reward Formulation Comparison',
                  fontsize=14, fontweight='bold', y=0.995)
@@ -566,9 +587,8 @@ def fig_dynamic_ablation_comparison(experiments, output_dir, ablation_map):
 
 def fig_dynamic_ablation_bar_chart(experiments, output_dir, ablation_map):
     """
-    Bar chart comparing Global β, β0, β1, JFI across dynamic ranges/rewards.
-
-    ablation_map: dict mapping run_name → reward-type label.
+    Bar chart comparing Global β, β0, β1, JFI across dynamic ranges/reward types.
+    Works with any reward-type labels — no 'global'/'uniform' hardcoding.
     """
     print("\n[Figure] Dynamic Scenarios Performance Comparison...")
 
@@ -578,44 +598,48 @@ def fig_dynamic_ablation_bar_chart(experiments, output_dir, ablation_map):
 
     r3, r5 = groups['range_3'], groups['range_5']
 
-    if not all(r3.values()) or not all(r5.values()):
-        print("  ⚠️  Missing experiments")
+    # Collect all reward types present across both ranges
+    all_rtypes = sorted(set(list(r3.keys()) + list(r5.keys())))
+    if not all_rtypes:
+        print("  ⚠️  No reward types found")
         return
 
-    # Build x-axis labels from the actual scenario_str
-    labels = [
-        f'{r3["global"]["scenario_str"]}\n{_reward_label(r3["global"], ablation_map).capitalize()}',
-        f'{r3["uniform"]["scenario_str"]}\n{_reward_label(r3["uniform"], ablation_map).capitalize()}',
-        f'{r5["global"]["scenario_str"]}\n{_reward_label(r5["global"], ablation_map).capitalize()}',
-        f'{r5["uniform"]["scenario_str"]}\n{_reward_label(r5["uniform"], ablation_map).capitalize()}',
-    ]
-    exps_ordered = [r3['global'], r3['uniform'], r5['global'], r5['uniform']]
+    # Build one bar group per (range × reward_type) combination
+    bar_labels, exps_ordered = [], []
+    for range_dict in [r3, r5]:
+        sample = next(iter(range_dict.values()))
+        pool   = sample.get('dynamic_profile_set', [])
+        pool_str = f"[{', '.join(p.title() for p in pool)}]" if pool else sample['scenario_str']
+        for rt in all_rtypes:
+            exp = range_dict.get(rt)
+            bar_labels.append(f'{pool_str}\n{rt.capitalize()}')
+            exps_ordered.append(exp)  # may be None if missing
 
     g_betas, b0s, b1s, jfis = [], [], [], []
     for exp in exps_ordered:
+        if exp is None:
+            g_betas.append(0); b0s.append(0); b1s.append(0); jfis.append(0)
+            continue
         stats = exp['statistics'].get('beta', {})
         g_betas.append(stats.get('last_100_mean', stats.get('mean', 0)) or 0)
-
         b0m, _, b1m, _ = _final_slice_means(exp)
         if b0m is not None:
+            s0, s1 = 1 - b0m, 1 - b1m
+            denom  = 2 * (s0 ** 2 + s1 ** 2)
             b0s.append(b0m)
             b1s.append(b1m)
-            s0, s1 = 1 - b0m, 1 - b1m
-            denom = 2 * (s0 ** 2 + s1 ** 2)
             jfis.append((s0 + s1) ** 2 / denom if denom > 0 else 0)
         else:
-            b0s.append(0)
-            b1s.append(0)
-            jfis.append(0)
+            b0s.append(0); b1s.append(0); jfis.append(0)
 
-    fig, ax = plt.subplots(figsize=(12, 6))
-    x = np.arange(len(labels))
+    fig, ax = plt.subplots(figsize=(max(10, len(bar_labels) * 2), 6))
+    x = np.arange(len(bar_labels))
     w = 0.2
     for offset, vals, label, color in [
         (-1.5 * w, g_betas, 'Global β', 'steelblue'),
-        (-0.5 * w, b0s,     'β0',        'lightskyblue'),
-        (0.5 * w,  b1s,     'β1',        'lightcoral'),
-        (1.5 * w,  jfis,    'JFI',       'lightgreen'),
+        (-0.5 * w, b0s,     'β₀',       'lightskyblue'),
+        (0.5 * w,  b1s,     'β₁',       'lightcoral'),
+        (1.5 * w,  jfis,    'JFI',      'lightgreen'),
     ]:
         ax.bar(x + offset, vals, w, label=label,
                alpha=0.8, edgecolor='black', linewidth=1.2, color=color)
@@ -625,7 +649,7 @@ def fig_dynamic_ablation_bar_chart(experiments, output_dir, ablation_map):
     ax.set_title('Dynamic Traffic: Performance Across Ranges and Reward Formulations',
                  fontsize=14, fontweight='bold')
     ax.set_xticks(x)
-    ax.set_xticklabels(labels, fontsize=9)
+    ax.set_xticklabels(bar_labels, fontsize=9)
     ax.legend(loc='upper right', framealpha=0.9, fontsize=10)
     ax.grid(True, alpha=0.3, axis='y')
     ax.set_ylim([0, 1.05])
@@ -833,20 +857,25 @@ def _group_by_reward(exps, ablation_map):
 
 def _group_dynamic_by_range(experiments, ablation_map):
     """
-    Split dynamic experiments into groups by number of unique traffic profiles
-    (traffic range) and by reward type from ablation_map.
+    Split dynamic experiments into groups by traffic range size and reward type.
+
+    'Range size' is the number of profiles in the dynamic profile pool
+    (exp['dynamic_profile_set']), NOT the number of unique values in
+    exp['scenario'] — all dynamic experiments have scenario == ['dynamic', ...]
+    which would always give range size 1.
 
     Returns:
         {'range_3': {rtype: exp, ...}, 'range_5': {rtype: exp, ...}}
-        or None if ablation_map is empty/None (ablation figures skipped).
+        Keys 'range_3' and 'range_5' refer to the two smallest distinct pool
+        sizes found in the data (the names are generic; both could be non-3/5).
+        Returns None if ablation_map is empty or fewer than 2 distinct pool sizes.
     """
     if not ablation_map:
-        print("  ⚠️  No ablation_map provided — skipping ablation figure")
+        print("  ⚠️  No ablation_map — skipping dynamic ablation figure")
         return None
 
     dynamic_exps = [e for e in experiments if e['category'] == 'dynamic']
-
-    range_groups = {}
+    range_groups = {}   # {pool_size: {rtype: exp}}
     unrecognised = []
 
     for exp in dynamic_exps:
@@ -854,27 +883,42 @@ def _group_dynamic_by_range(experiments, ablation_map):
         if rtype is None:
             unrecognised.append(exp['run_name'])
             continue
-        n_profiles = len(set(exp['scenario'].values()))
-        range_groups.setdefault(n_profiles, {})
-        # First experiment seen for each (n_profiles, rtype) wins
-        if rtype not in range_groups[n_profiles]:
-            range_groups[n_profiles][rtype] = exp
+        pool      = exp.get('dynamic_profile_set', [])
+        pool_size = len(pool)
+        range_groups.setdefault(pool_size, {})
+        if rtype not in range_groups[pool_size]:
+            range_groups[pool_size][rtype] = exp
 
     if unrecognised:
-        print(f"  ⚠️  The following dynamic run_names are not in ablation_map:")
+        print(f"  ⚠️  Dynamic run_names not in ablation_map:")
         for name in unrecognised:
             print(f"       {name}")
 
-    # Map to the two named groups using the two smallest distinct range sizes
-    sorted_ranges = sorted(range_groups.keys())
-    if len(sorted_ranges) < 2:
-        print(f"  ⚠️  Need dynamic experiments with at least 2 distinct traffic ranges, "
-              f"found: {sorted_ranges}")
+    sorted_sizes = sorted(range_groups.keys())
+
+    # Diagnostic: show every experiment and what group it landed in
+    print(f"  Dynamic experiment grouping (by profile-pool size):")
+    for exp in dynamic_exps:
+        rtype     = ablation_map.get(exp['run_name'], 'NOT IN MAP')
+        pool      = exp.get('dynamic_profile_set', [])
+        pool_size = len(pool)
+        print(f"    {exp['run_name']}: pool={pool} (size={pool_size}), reward={rtype}")
+
+    if len(sorted_sizes) < 2:
+        print(f"  ⚠️  Need dynamic experiments with at least 2 distinct profile-pool "
+              f"sizes for ablation comparison.")
+        print(f"       Found pool sizes: {sorted_sizes}")
+        print(f"       Each pool size needs experiments with both reward formulations.")
+        print(f"       Example setup:")
+        print(f"         Run A: dynamic_profile_set=['low','medium','high'],         reward=global")
+        print(f"         Run B: dynamic_profile_set=['low','medium','high'],         reward=weighted")
+        print(f"         Run C: dynamic_profile_set=['extremely_low',...,'extremely_high'], reward=global")
+        print(f"         Run D: dynamic_profile_set=['extremely_low',...,'extremely_high'], reward=weighted")
         return None
 
     return {
-        'range_3': range_groups[sorted_ranges[0]],
-        'range_5': range_groups[sorted_ranges[1]],
+        'range_3': range_groups[sorted_sizes[0]],
+        'range_5': range_groups[sorted_sizes[1]],
     }
 
 
@@ -882,10 +926,10 @@ def _debug_dynamic(experiments, ablation_map):
     print("\n  Available dynamic experiments:")
     for exp in experiments:
         if exp['category'] == 'dynamic':
-            n = len(set(exp['scenario'].values()))
+            pool  = exp.get('dynamic_profile_set', [])
             has_s = 'dti_beta_slice0' in exp['data']
             rtype = ablation_map.get(exp['run_name'], '⚠️  NOT IN MAP')
-            print(f"    - {exp['run_name']}: {n} profiles, "
+            print(f"    - {exp['run_name']}: pool={pool} (size={len(pool)}), "
                   f"per_slice={has_s}, reward_type={rtype}")
 
 

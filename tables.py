@@ -388,10 +388,11 @@ def generate_dynamic_ablation_table(experiments, output_dir, ablation_map):
     """
     LaTeX table: dynamic scenario ablation by traffic range and reward type.
 
-    ablation_map: dict mapping run_name → reward-type label.
-    Experiments are grouped by number of unique traffic profiles (range size),
-    then by reward type.  Range labels are derived from the actual scenario_str
-    values in the data — no hardcoded profile names are used.
+    'Traffic range' is identified by the dynamic_profile_set stored in each
+    experiment (e.g. ['low','medium','high'] vs ['extremely_low',...]).
+    Grouping uses pool size (len of profile set), not len(set(scenario.values()))
+    — the latter is always 1 for dynamic experiments since all slices are 'dynamic'.
+    Range labels are the actual profile-set strings from the data.
     """
     print("\n[Table] Dynamic Scenarios Ablation...")
 
@@ -404,8 +405,8 @@ def generate_dynamic_ablation_table(experiments, output_dir, ablation_map):
         print("  ⚠️  No dynamic experiments found")
         return
 
-    # Group by (n_profiles, reward_type) using ablation_map
-    range_groups = {}   # {n_profiles: {rtype: exp}}
+    # Group by (pool_size, reward_type) using dynamic_profile_set
+    range_groups = {}   # {pool_size: {rtype: exp}}
     unrecognised = []
 
     for exp in dynamic_exps:
@@ -413,23 +414,29 @@ def generate_dynamic_ablation_table(experiments, output_dir, ablation_map):
         if rtype is None:
             unrecognised.append(exp['run_name'])
             continue
-        n = len(set(exp['scenario'].values()))
-        range_groups.setdefault(n, {})
-        if rtype not in range_groups[n]:
-            range_groups[n][rtype] = exp
+        pool      = exp.get('dynamic_profile_set', [])
+        pool_size = len(pool)
+        range_groups.setdefault(pool_size, {})
+        if rtype not in range_groups[pool_size]:
+            range_groups[pool_size][rtype] = exp
 
     if unrecognised:
         print(f"  ⚠️  run_names not in ablation_map (skipped): {unrecognised}")
 
-    sorted_ranges = sorted(range_groups.keys())
-    if len(sorted_ranges) < 2:
-        print(f"  ⚠️  Need at least 2 distinct traffic ranges, found: {sorted_ranges}")
+    sorted_sizes = sorted(range_groups.keys())
+    if len(sorted_sizes) < 2:
+        print(f"  ⚠️  Need at least 2 distinct profile-pool sizes for ablation table.")
+        print(f"       Found sizes: {sorted_sizes}")
+        for exp in dynamic_exps:
+            pool  = exp.get('dynamic_profile_set', [])
+            rtype = ablation_map.get(exp['run_name'], 'NOT IN MAP')
+            print(f"       {exp['run_name']}: pool={pool}, reward={rtype}")
         return
 
-    # Collect all reward-type labels (preserving order)
+    # Collect all reward-type labels (preserving insertion order)
     all_rtypes = []
-    for n in sorted_ranges:
-        for rt in range_groups[n]:
+    for sz in sorted_sizes:
+        for rt in range_groups[sz]:
             if rt not in all_rtypes:
                 all_rtypes.append(rt)
 
@@ -456,16 +463,19 @@ def generate_dynamic_ablation_table(experiments, output_dir, ablation_map):
         }
 
     rows = []
-    for n in sorted_ranges:
-        # Use scenario_str of the first available experiment as the range label
-        sample_exp = next(iter(range_groups[n].values()))
-        range_label = sample_exp['scenario_str']
-        n_rtypes = len(all_rtypes)
+    for sz in sorted_sizes:
+        # Build a readable range label from the actual profile set
+        sample_exp  = next(iter(range_groups[sz].values()))
+        pool        = sample_exp.get('dynamic_profile_set', [])
+        period      = sample_exp.get('dynamic_change_period')
+        pool_str    = ', '.join(p.title() for p in pool)
+        period_str  = f', T={period}' if period else ''
+        range_label = f'[{pool_str}]{period_str}'
+        n_rtypes    = len(all_rtypes)
 
         for i, rtype in enumerate(all_rtypes):
-            exp = range_groups[n].get(rtype)
+            exp = range_groups[sz].get(rtype)
             if exp is None:
-                # Reward type not present for this range
                 rows.append({
                     'range': range_label if i == 0 else '',
                     'n_rtypes': n_rtypes,
