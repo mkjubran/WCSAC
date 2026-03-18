@@ -167,7 +167,7 @@ def _bar_chart_metric(sorted_exps, metric, ylabel, title, color, out_path, label
     ax.set_ylabel(ylabel)
     ax.set_title(title)
     ax.set_xticks(x)
-    ax.set_xticklabels(profiles, rotation=45, ha='right')
+    ax.set_xticklabels(profiles)
     ax.grid(True, alpha=0.3, axis='y')
     plt.tight_layout()
     plt.savefig(out_path, dpi=FIGURE_DPI, bbox_inches='tight')
@@ -258,7 +258,7 @@ def fig2_static_homogeneous(exps_by_cat, baseline_data, output_dir):
     suffix = ' (SAC vs Baselines)' if has_bl else ''
     ax.set_title(f'Performance Across Static Homogeneous Traffic{suffix}')
     ax.set_xticks(x_pos)
-    ax.set_xticklabels(profiles, rotation=45, ha='right')
+    ax.set_xticklabels(profiles)
     ax.grid(True, alpha=0.3, axis='y')
     if has_bl:
         ax.legend(loc='best', framealpha=0.9)
@@ -342,7 +342,7 @@ def fig3_heterogeneous(exps_by_cat, baseline_data, output_dir):
     suffix = ' (SAC vs Baselines)' if has_bl else ''
     ax.set_title(f'Performance Under Heterogeneous Traffic{suffix}')
     ax.set_xticks(x_pos)
-    ax.set_xticklabels(scenarios, rotation=45, ha='right')
+    ax.set_xticklabels(scenarios)
     ax.grid(True, alpha=0.3, axis='y')
     if has_bl:
         ax.legend(loc='best', framealpha=0.9)
@@ -424,7 +424,6 @@ def fig4_allocation_patterns(experiments, output_dir):
     ax.set_title('Allocation Distribution Across Heterogeneous Scenarios (Episode 80)',
                  fontsize=14, fontweight='bold')
     ax.grid(True, alpha=0.3, axis='y')
-    plt.xticks(rotation=45, ha='right')
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, f'fig4_allocation_patterns.{FIGURE_FORMAT}'),
                 dpi=FIGURE_DPI, bbox_inches='tight')

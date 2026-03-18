@@ -29,13 +29,13 @@ from plot_style import (
 )
 
 _PROFILE_NAMES = {
-    0: 'Uniform',
-    1: 'Extremely Low',
-    2: 'Low',
-    3: 'Medium',
-    4: 'High',
-    5: 'Extremely High',
-    6: 'External',
+    0: 'U',
+    1: 'EL',
+    2: 'L',
+    3: 'M',
+    4: 'H',
+    5: 'EH',
+    6: 'Ext',
 }
 
 
@@ -84,7 +84,7 @@ def fig5_dynamic_scenarios(exps_by_cat, output_dir):
         _fig5b_allocation_timeseries(exp, output_dir, suffix)
 
         # Episode 80
-        _fig5_episode_profiles(data, output_dir, episode=80,
+        _fig5_episode_profiles(exp, data, output_dir, episode=80,
                                 label=f'fig5c{suffix}')
         _fig5_allocation_periods(exp, output_dir, episode=80,
                                  label_prefix=f'fig5d{suffix}')
@@ -94,7 +94,7 @@ def fig5_dynamic_scenarios(exps_by_cat, output_dir):
                               label=f'fig5d3{suffix}')
 
         # Episode 160
-        _fig5_episode_profiles(data, output_dir, episode=160,
+        _fig5_episode_profiles(exp, data, output_dir, episode=160,
                                 label=f'fig5e{suffix}')
         _fig5_allocation_periods(exp, output_dir, episode=160,
                                  label_prefix=f'fig5f{suffix}')
@@ -146,17 +146,22 @@ def _fig5b_allocation_timeseries(exp, output_dir, suffix=''):
     _save(fig, output_dir, f'fig5b_dynamic_allocation{suffix}')
 
 
-def _fig5_episode_profiles(data, output_dir, episode, label):
+def _ep_slice_label(slice_labels, idx):
+    """Return slice_labels[idx] if available, else 'Slice N'."""
+    return slice_labels[idx] if idx < len(slice_labels) else f'Slice {idx}'
+
+
+def _fig5_episode_profiles(exp, data, output_dir, episode, label):
     """
     Active traffic profiles within a single episode.
 
     Uses the per-episode keys logged directly by step1:
       episode_{N}/active_profile_slice0  →  ep{N}_active_profile_slice0
       episode_{N}/active_profile_slice1  →  ep{N}_active_profile_slice1
-    The x-axis index is the position within the episode's values list (0-based DTI).
-    Y-axis ticks are derived from the profile integer values actually present in
-    the data, mapped through _PROFILE_NAMES where available.
+    Y-axis ticks use abbreviations (EL, L, M, H, EH) from _PROFILE_NAMES.
+    Legend uses slice_labels from the experiment (e.g. VoIP, CBR).
     """
+    profile_labels = exp.get('slice_labels', [])
     s0_key = f'ep{episode}_active_profile_slice0'
     s1_key = f'ep{episode}_active_profile_slice1'
     if s0_key not in data or s1_key not in data:
@@ -174,7 +179,7 @@ def _fig5_episode_profiles(data, output_dir, episode, label):
         kw = dict(where='post', alpha=0.8, linewidth=2.5, linestyle=ls, color=color)
         if dashes[0] is not None:
             kw['dashes'] = dashes
-        ax.step(dtis, values, label=f'Slice {idx}', **kw)
+        ax.step(dtis, values, label=_ep_slice_label(profile_labels, idx), **kw)
 
     # Build yticks only from profile IDs actually present in the data
     present_ids = sorted(set(int(v) for v in all_values))
@@ -301,15 +306,11 @@ def _fig5_continuous_beta(data, output_dir, episode, label):
 
     steps = data[ep_key].get('steps', list(range(len(data[ep_key]['values']))))
     fig, ax = plt.subplots(figsize=(14, 6))
-    ax.plot(steps, data[ep_key]['values'], color='red', alpha=0.8, linewidth=2.0,
-            label='β (QoS Violation Ratio)')
-    ax.axhline(y=0, color='green', linestyle='--', alpha=0.3, linewidth=1,
-               label='Perfect QoS (β=0)')
+    ax.plot(steps, data[ep_key]['values'], color='red', alpha=0.8, linewidth=2.0)
     ax.set_xlabel(f'DTI (within Episode {episode})', fontsize=12)
     ax.set_ylabel(LABEL_BETA, fontsize=12)
     ax.set_title(f'QoS Violation Ratio Over Time (Episode {episode})',
                  fontsize=14, fontweight='bold')
-    ax.legend(loc='best', framealpha=0.9)
     ax.grid(True, alpha=0.3)
     ax.set_ylim([0, 1.05])
     _save(fig, output_dir, f'{label}_continuous_beta_ep{episode}')
@@ -327,10 +328,10 @@ def fig_actor_loss_comparison(experiments, output_dir):
     for exp in experiments:
         if exp['category'] == 'static_heterogeneous' and len(to_plot) == 0:
             if 'episode_actor_loss' in exp.get('data', {}):
-                to_plot.append(('Heterogeneous', exp, 'coral'))
+                to_plot.append(('Heterogeneous', exp, '#e41a1c'))
         elif exp['category'] == 'dynamic' and len(to_plot) <= 1:
             if 'episode_actor_loss' in exp.get('data', {}):
-                to_plot.append(('Dynamic', exp, 'steelblue'))
+                to_plot.append(('Dynamic', exp, '#377eb8'))
         if len(to_plot) == 2:
             break
 
@@ -459,7 +460,6 @@ def fig_episode_per_slice_beta(experiments, output_dir, episode=80):
             label=f'{s0_name} β', color='steelblue', linewidth=1.5, alpha=0.7, linestyle='--')
     ax.plot(steps, np.array(data[s1_key]['values']),
             label=f'{s1_name} β', color='coral', linewidth=1.5, alpha=0.7, linestyle='--')
-    ax.axhline(y=0, color='green', linestyle='--', alpha=0.3, linewidth=1)
     ax.set_xlabel(f'DTI (within Episode {episode})', fontsize=12)
     ax.set_ylabel(LABEL_BETA, fontsize=12)
     ax.set_title(f'Per-Slice QoS Violations (Episode {episode})',
@@ -502,8 +502,8 @@ def fig_slice_beta_boxplot(experiments, output_dir):
     ax.grid(True, alpha=0.3, axis='y')
     ax.set_ylim([0, 1.0])
     ax.text(0.02, 0.98,
-            f"Slice 0: μ={fb0.mean():.3f}, σ={fb0.std():.3f}\n"
-            f"Slice 1: μ={fb1.mean():.3f}, σ={fb1.std():.3f}",
+            f"{s0_name}: μ={fb0.mean():.3f}, σ={fb0.std():.3f}\n"
+            f"{s1_name}: μ={fb1.mean():.3f}, σ={fb1.std():.3f}",
             transform=ax.transAxes, verticalalignment='top',
             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5), fontsize=10)
     _save(fig, output_dir, 'fig_slice_beta_boxplot')
