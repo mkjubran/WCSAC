@@ -19,9 +19,10 @@ datasets/
 runs/
 runsNoEntropy/
 results/
+runsPaper-bu/
 configs/
 configsNoEnropty/
+configsPaper-bu/
 checkpoints/
-
 # Logs
 *.log

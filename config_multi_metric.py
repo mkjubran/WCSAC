@@ -253,13 +253,12 @@ UNUSED_CAPACITY_REWARD_WEIGHT = 0.1
 # TRAFFIC GENERATION
 # ============================================================================
 
-TRAFFIC_PROFILES = ['medium', 'high']
-#TRAFFIC_PROFILES = ['medium', 'high']
+TRAFFIC_PROFILES = ['dynamic', 'dynamic']
 # Options: 'uniform', 'extremely_low', 'low', 'medium', 'high', 'extremely_high', 'dynamic', 'external'
 
 # Dynamic Profile Configuration
 DYNAMIC_PROFILE_CONFIG = {
-    'profile_set': ['extremely_low','low', 'medium', 'high','extremely_high'],
+    'profile_set': ['low', 'medium', 'high'],
     'change_period': 200
 }
 
@@ -283,7 +282,7 @@ T_MAX = 2000
 #   [0.6, 0.2, 0.2]    → Heavily prioritize VoIP
  
 SLICE_WEIGHTS = [0.5, 0.5]  # Weights for each slice (must sum to ~1, auto-normalized)
-USE_SLICE_WEIGHTED_REWARD = True     # Enable per-slice weighted mode
+USE_SLICE_WEIGHTED_REWARD = False #True     # Enable per-slice weighted mode
  
 # Notes:
 # - Weights are automatically normalized to sum to 1.0
