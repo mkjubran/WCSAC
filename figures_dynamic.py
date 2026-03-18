@@ -26,6 +26,7 @@ from plot_style import (
     FIGURE_DPI, FIGURE_FORMAT,
     COLOR_BETA, LABEL_BETA, LABEL_DTI, LABEL_RBS, LABEL_EPISODE,
     abbrev_profile,
+    abbrev_scenario_str,
 )
 
 _PROFILE_NAMES = {
@@ -321,37 +322,67 @@ def _fig5_continuous_beta(data, output_dir, episode, label):
 # ---------------------------------------------------------------------------
 
 def fig_actor_loss_comparison(experiments, output_dir):
-    """Training actor loss comparison: one heterogeneous + one dynamic experiment."""
+    """
+    Training actor loss comparison between two dynamic experiments with
+    different profile pools (e.g. [L,M,H] vs [EL,L,M,H,EH]).
+
+    Falls back to any two experiments with actor loss data if fewer than
+    two dynamic runs are available.
+    """
     print("\n[Figure] Actor Loss Comparison...")
 
+    # Prefer dynamic experiments; pick one per distinct pool size
+    dynamic_with_loss = [
+        e for e in experiments
+        if e['category'] == 'dynamic'
+        and 'episode_actor_loss' in e.get('data', {})
+    ]
+
+    seen_pool_sizes = {}
     to_plot = []
-    for exp in experiments:
-        if exp['category'] == 'static_heterogeneous' and len(to_plot) == 0:
-            if 'episode_actor_loss' in exp.get('data', {}):
-                to_plot.append(('Heterogeneous', exp, '#e41a1c'))
-        elif exp['category'] == 'dynamic' and len(to_plot) <= 1:
-            if 'episode_actor_loss' in exp.get('data', {}):
-                to_plot.append(('Dynamic', exp, '#377eb8'))
+    for exp in dynamic_with_loss:
+        pool_size = len(exp.get('dynamic_profile_set', []))
+        if pool_size not in seen_pool_sizes:
+            seen_pool_sizes[pool_size] = exp
+            pool = exp.get('dynamic_profile_set', [])
+            label = f"Dynamic [{abbrev_profile(pool)}]" if pool else exp['scenario_str']
+            to_plot.append((label, exp))
         if len(to_plot) == 2:
             break
+
+    # If we couldn't find two distinct dynamic pools, fall back to any two experiments
+    if len(to_plot) < 2:
+        for exp in experiments:
+            if exp in [t[1] for t in to_plot]:
+                continue
+            if 'episode_actor_loss' in exp.get('data', {}):
+                pool = exp.get('dynamic_profile_set', [])
+                if pool:
+                    label = f"[{abbrev_profile(pool)}]"
+                else:
+                    label = f"{exp['category'].title()} ({abbrev_scenario_str(exp['scenario_str'])})"
+                to_plot.append((label, exp))
+            if len(to_plot) == 2:
+                break
 
     if not to_plot:
         print("  ⚠️  No actor loss data available")
         return
 
+    # Clearly distinct colors: orange and dark green
+    colors = ['#d95f02', '#1b7837']
+
     fig, ax = plt.subplots(figsize=(10, 6))
-    for label, exp, color in to_plot:
-        steps = np.array(exp['data']['episode_actor_loss']['steps'])
+    for (label, exp), color in zip(to_plot, colors):
+        steps  = np.array(exp['data']['episode_actor_loss']['steps'])
         values = np.array(exp['data']['episode_actor_loss']['values'])
-        ax.plot(steps, values, alpha=0.3, color=color, linewidth=0.5)
+        ax.plot(steps, values, alpha=0.25, color=color, linewidth=0.8)
         if len(values) >= 50:
             window = min(50, len(values) // 2)
             ma = np.convolve(values, np.ones(window) / window, mode='valid')
-            ax.plot(steps[window - 1:], ma, color=color, linewidth=2,
-                    label=f'{label} ({exp["scenario_str"]})')
+            ax.plot(steps[window - 1:], ma, color=color, linewidth=2, label=label)
         else:
-            ax.plot(steps, values, color=color, linewidth=2,
-                    label=f'{label} ({exp["scenario_str"]})')
+            ax.plot(steps, values, color=color, linewidth=2, label=label)
 
     ax.set_xlabel(LABEL_EPISODE)
     ax.set_ylabel('Actor Loss')
@@ -753,7 +784,7 @@ def fig_ablation_reward_formulation_robust(experiments, output_dir, ablation_map
                  'Per-Slice Violation Ratios and Fairness Across Heterogeneous Scenarios',
                  fontsize=14, fontweight='bold')
     ax.set_xticks(x)
-    ax.set_xticklabels(scenario_names, rotation=15, ha='right')
+    ax.set_xticklabels([abbrev_scenario_str(s) for s in scenario_names])
     ax.legend(loc='upper left', fontsize=8, ncol=n_rtypes * 2, framealpha=0.9)
     ax.grid(True, alpha=0.3, axis='y')
     ax.set_ylim([0, 1.05])
