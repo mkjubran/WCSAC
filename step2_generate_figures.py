@@ -1642,8 +1642,13 @@ def fig_ablation_reward_formulation_robust(experiments, output_dir):
     """
     Ablation study: Compare Global β reward vs Uniform weighted reward.
     
-    Shows grouped bar chart with detailed logging to debug issues.
-    More robust than the original version.
+    FIXED: Now shows per-slice data for BOTH formulations since both have it logged.
+    
+    Shows grouped bar chart with:
+    - Global Reward: Global β, β₀, β₁, JFI
+    - Uniform Reward: Global β, β₀, β₁, JFI
+    
+    Total: 8 bars per scenario
     """
     print("\n[Figure] Ablation Study: Reward Formulation Comparison...")
     print("="*80)
@@ -1667,14 +1672,15 @@ def fig_ablation_reward_formulation_robust(experiments, output_dir):
         if scenario_key not in scenarios:
             scenarios[scenario_key] = {'global': None, 'uniform': None}
         
-        # Determine type based on per-slice data
-        has_per_slice = ('dti_beta_slice0' in exp['data'] and 
-                        'dti_beta_slice1' in exp['data'])
+        # Determine type - using run date heuristic
+        # March 7 or March 17 = Global
+        # March 15+ = Uniform
+        run_name = exp['run_name']
         
-        if has_per_slice:
-            scenarios[scenario_key]['uniform'] = exp
-        else:
+        if '20260307' in run_name or '20260317' in run_name:
             scenarios[scenario_key]['global'] = exp
+        else:
+            scenarios[scenario_key]['uniform'] = exp
     
     print(f"\nGrouped into {len(scenarios)} unique scenarios:")
     for scenario_key, exps in scenarios.items():
@@ -1688,18 +1694,22 @@ def fig_ablation_reward_formulation_robust(experiments, output_dir):
     
     if not complete_scenarios:
         print("\n⚠️  No scenarios with both Global and Uniform reward formulations!")
-        print("\nYou need to run experiments with:")
-        print("  1. use_slice_weighted_reward=False (Global)")
-        print("  2. use_slice_weighted_reward=True, slice_weights=[0.5, 0.5] (Uniform)")
-        print("\nFor the same heterogeneous scenarios.")
         return
     
     print(f"\n✓ Found {len(complete_scenarios)} scenarios with both formulations")
     
     # Collect data
+    import numpy as np
+    
     scenario_names = sorted(complete_scenarios.keys())
     
+    # Global reward data
     global_betas = []
+    global_beta0s = []
+    global_beta1s = []
+    global_jfis = []
+    
+    # Uniform reward data
     uniform_betas = []
     uniform_beta0s = []
     uniform_beta1s = []
@@ -1708,7 +1718,9 @@ def fig_ablation_reward_formulation_robust(experiments, output_dir):
     for scenario_name in scenario_names:
         print(f"\nProcessing: {scenario_name}")
         
-        # Global reward
+        # ===================================================================
+        # GLOBAL REWARD
+        # ===================================================================
         global_exp = complete_scenarios[scenario_name]['global']
         global_stats = global_exp['statistics'].get('beta', {})
         global_beta = global_stats.get('last_100_mean', global_stats.get('mean', 0.0))
@@ -1717,9 +1729,43 @@ def fig_ablation_reward_formulation_robust(experiments, output_dir):
             global_beta = 0.0
         
         global_betas.append(global_beta)
-        print(f"  Global β: {global_beta:.4f}")
+        print(f"  Global β (Global): {global_beta:.4f}")
         
-        # Uniform reward
+        # FIXED: Check if Global reward experiment has per-slice data
+        if 'dti_beta_slice0' in global_exp['data'] and 'dti_beta_slice1' in global_exp['data']:
+            beta0_values = global_exp['data']['dti_beta_slice0']['values']
+            beta1_values = global_exp['data']['dti_beta_slice1']['values']
+            
+            cutoff = int(len(beta0_values) * 0.8)
+            final_beta0 = np.array(beta0_values[cutoff:])
+            final_beta1 = np.array(beta1_values[cutoff:])
+            
+            beta0_mean = float(np.mean(final_beta0))
+            beta1_mean = float(np.mean(final_beta1))
+            
+            global_beta0s.append(beta0_mean)
+            global_beta1s.append(beta1_mean)
+            
+            print(f"  β₀ (Global): {beta0_mean:.4f}")
+            print(f"  β₁ (Global): {beta1_mean:.4f}")
+            
+            # JFI
+            s0 = 1.0 - beta0_mean
+            s1 = 1.0 - beta1_mean
+            jfi = (s0 + s1)**2 / (2 * (s0**2 + s1**2)) if (s0**2 + s1**2) > 0 else 0.0
+            global_jfis.append(jfi)
+            
+            print(f"  JFI (Global): {jfi:.4f}")
+        else:
+            # Fallback if no per-slice data
+            global_beta0s.append(0.0)
+            global_beta1s.append(0.0)
+            global_jfis.append(0.0)
+            print(f"  No per-slice data for Global")
+        
+        # ===================================================================
+        # UNIFORM REWARD
+        # ===================================================================
         uniform_exp = complete_scenarios[scenario_name]['uniform']
         uniform_stats = uniform_exp['statistics'].get('beta', {})
         uniform_beta = uniform_stats.get('last_100_mean', uniform_stats.get('mean', 0.0))
@@ -1728,10 +1774,9 @@ def fig_ablation_reward_formulation_robust(experiments, output_dir):
             uniform_beta = 0.0
         
         uniform_betas.append(uniform_beta)
-        print(f"  Uniform β: {uniform_beta:.4f}")
+        print(f"  Global β (Uniform): {uniform_beta:.4f}")
         
         # Per-slice for uniform
-        import numpy as np
         beta0_values = uniform_exp['data']['dti_beta_slice0']['values']
         beta1_values = uniform_exp['data']['dti_beta_slice1']['values']
         
@@ -1745,35 +1790,71 @@ def fig_ablation_reward_formulation_robust(experiments, output_dir):
         uniform_beta0s.append(beta0_mean)
         uniform_beta1s.append(beta1_mean)
         
-        print(f"  β₀: {beta0_mean:.4f}")
-        print(f"  β₁: {beta1_mean:.4f}")
+        print(f"  β₀ (Uniform): {beta0_mean:.4f}")
+        print(f"  β₁ (Uniform): {beta1_mean:.4f}")
         
-        # JFI (Jain's Fairness Index)
+        # JFI
         s0 = 1.0 - beta0_mean
         s1 = 1.0 - beta1_mean
         jfi = (s0 + s1)**2 / (2 * (s0**2 + s1**2)) if (s0**2 + s1**2) > 0 else 0.0
         
         uniform_jfis.append(jfi)
-        print(f"  JFI: {jfi:.4f}")
+        print(f"  JFI (Uniform): {jfi:.4f}")
     
-    # Create figure
+    # ===================================================================
+    # CREATE FIGURE WITH ALL 8 BARS
+    # ===================================================================
     fig, ax = plt.subplots(figsize=(14, 7))
     
     x = np.arange(len(scenario_names))
-    width = 0.1
+    width = 0.09  # Narrower bars to fit 8 per scenario
     
-    # Plot bars (5 bars per scenario)
-    ax.bar(x - 2.0*width, global_betas, width, 
-           label='Global β (Global Reward)', color='steelblue', alpha=0.8, edgecolor='black', linewidth=1.2)
-    ax.bar(x - 1.0*width, uniform_betas, width,
-           label='Global β (Uniform Reward)', color='coral', alpha=0.8, edgecolor='black', linewidth=1.2)
-    ax.bar(x + 0.0*width, uniform_beta0s, width,
-           label='β₀ (Uniform Reward)', color='lightskyblue', alpha=0.8, edgecolor='black', linewidth=1.2)
-    ax.bar(x + 1.0*width, uniform_beta1s, width,
-           label='β₁ (Uniform Reward)', color='lightcoral', alpha=0.8, edgecolor='black', linewidth=1.2)
-    ax.bar(x + 2.0*width, uniform_jfis, width,
-           label='JFI (Uniform Reward)', color='lightgreen', alpha=0.8, edgecolor='black', linewidth=1.2)
+    # Define colors
+    color_global_beta = '#5B9BD5'       # Blue
+    color_global_beta0 = '#9DC3E6'      # Light blue
+    color_global_beta1 = '#BDD7EE'      # Lighter blue
+    color_global_jfi = '#DEEBF7'        # Lightest blue
     
+    color_uniform_beta = '#ED7D31'      # Orange
+    color_uniform_beta0 = '#F4B183'     # Light orange
+    color_uniform_beta1 = '#FCE4D6'     # Lighter orange
+    color_uniform_jfi = '#92D050'       # Green
+    
+    # Plot Global reward (4 bars)
+    ax.bar(x - 3.5*width, global_betas, width, 
+           label='Global β (Global)', 
+           color=color_global_beta, alpha=0.9, edgecolor='black', linewidth=1.2)
+    
+    ax.bar(x - 2.5*width, global_beta0s, width,
+           label='β₀ (Global)',
+           color=color_global_beta0, alpha=0.9, edgecolor='black', linewidth=1.2)
+    
+    ax.bar(x - 1.5*width, global_beta1s, width,
+           label='β₁ (Global)',
+           color=color_global_beta1, alpha=0.9, edgecolor='black', linewidth=1.2)
+    
+    ax.bar(x - 0.5*width, global_jfis, width,
+           label='JFI (Global)',
+           color=color_global_jfi, alpha=0.9, edgecolor='black', linewidth=1.2)
+    
+    # Plot Uniform reward (4 bars)
+    ax.bar(x + 0.5*width, uniform_betas, width,
+           label='Global β (Uniform)',
+           color=color_uniform_beta, alpha=0.9, edgecolor='black', linewidth=1.2)
+    
+    ax.bar(x + 1.5*width, uniform_beta0s, width,
+           label='β₀ (Uniform)',
+           color=color_uniform_beta0, alpha=0.9, edgecolor='black', linewidth=1.2)
+    
+    ax.bar(x + 2.5*width, uniform_beta1s, width,
+           label='β₁ (Uniform)',
+           color=color_uniform_beta1, alpha=0.9, edgecolor='black', linewidth=1.2)
+    
+    ax.bar(x + 3.5*width, uniform_jfis, width,
+           label='JFI (Uniform)',
+           color=color_uniform_jfi, alpha=0.9, edgecolor='black', linewidth=1.2)
+    
+    # Formatting
     ax.set_xlabel('Traffic Scenario', fontsize=12)
     ax.set_ylabel('Metric Value', fontsize=12)
     ax.set_title('Ablation Study: Global β Reward vs. Uniform Weighted Reward\n' +
@@ -1781,7 +1862,7 @@ def fig_ablation_reward_formulation_robust(experiments, output_dir):
                 fontsize=14, fontweight='bold')
     ax.set_xticks(x)
     ax.set_xticklabels(scenario_names, rotation=15, ha='right')
-    ax.legend(loc='upper left', fontsize=10, framealpha=0.9)
+    ax.legend(loc='upper left', fontsize=9, ncol=2, framealpha=0.9)
     ax.grid(True, alpha=0.3, axis='y')
     ax.set_ylim([0, 1.05])
     
@@ -1804,6 +1885,7 @@ def fig_ablation_reward_formulation_robust(experiments, output_dir):
     
     print(f"\n✓ fig_ablation_reward_robust.{FIGURE_FORMAT}")
     print(f"  Scenarios: {', '.join(scenario_names)}")
+    print(f"  Total bars: {len(scenario_names) * 8}")
 
  
 def generate_latex_table_static_homogeneous(exps_by_cat, baseline_data, output_dir):
@@ -2097,11 +2179,13 @@ def generate_ablation_table(experiments, output_dir):
     """
     Generate LaTeX table for ablation study.
     
+    FIXED: Now computes per-slice data for BOTH Global and Uniform reward formulations
+    since both have per-slice beta data logged.
+    
     Format:
     - Rows: Scenarios with multirow for Global/Uniform
     - Columns: Global β, β₀, β₁, JFI
-    - Global reward: Only Global β available (rest N/A)
-    - Uniform reward: All metrics available
+    - Both formulations show all metrics
     """
     print("\n[Table] Ablation Study: Global vs Uniform Reward...")
     
@@ -2121,14 +2205,20 @@ def generate_ablation_table(experiments, output_dir):
         if scenario_key not in scenarios:
             scenarios[scenario_key] = {'global': None, 'uniform': None}
         
-        # Determine type based on per-slice data
-        has_per_slice = ('dti_beta_slice0' in exp['data'] and 
-                        'dti_beta_slice1' in exp['data'])
+        # Determine type - need a way to distinguish Global vs Uniform
+        # Option 1: Check reward_formulation metadata (if available)
+        # Option 2: Use run name pattern (older runs = global, newer = uniform)
+        # Option 3: Manual mapping based on known runs
         
-        if has_per_slice:
-            scenarios[scenario_key]['uniform'] = exp
-        else:
+        # For now, using run date heuristic:
+        # March 7 or March 17 runs = Global
+        # March 15+ runs = Uniform
+        run_name = exp['run_name']
+        
+        if '20260307' in run_name or '20260317' in run_name:
             scenarios[scenario_key]['global'] = exp
+        else:
+            scenarios[scenario_key]['uniform'] = exp
     
     # Filter to complete scenarios (both formulations)
     complete_scenarios = {k: v for k, v in scenarios.items() 
@@ -2136,6 +2226,9 @@ def generate_ablation_table(experiments, output_dir):
     
     if not complete_scenarios:
         print("  ⚠️  No scenarios with both Global and Uniform formulations")
+        print("\n  Available scenarios:")
+        for scenario_key, exps in scenarios.items():
+            print(f"    {scenario_key}: global={exps['global'] is not None}, uniform={exps['uniform'] is not None}")
         return
     
     print(f"  Found {len(complete_scenarios)} complete scenarios")
@@ -2169,41 +2262,83 @@ def generate_ablation_table(experiments, output_dir):
         uniform_exp = complete_scenarios[scenario_key]['uniform']
         
         # --- Global Reward Row ---
+        print(f"\n  Processing {scenario_key} (Global):")
+        
         global_stats = global_exp['statistics'].get('beta', {})
         global_mean = global_stats.get('last_100_mean', global_stats.get('mean'))
         global_std = global_stats.get('last_100_std', global_stats.get('std'))
         
         if global_mean is not None and global_std is not None:
             global_beta_str = f"{global_mean:.4f} $\\pm$ {global_std:.4f}"
+            print(f"    Global β: {global_beta_str}")
         else:
             global_beta_str = "---"
+            print(f"    Global β: N/A")
         
-        # Global reward doesn't have per-slice data
+        # FIXED: Check if Global reward experiment has per-slice data
+        if 'dti_beta_slice0' in global_exp['data'] and 'dti_beta_slice1' in global_exp['data']:
+            print(f"    Has per-slice data: YES")
+            
+            # Compute per-slice stats for Global reward
+            beta0_values = global_exp['data']['dti_beta_slice0']['values']
+            beta1_values = global_exp['data']['dti_beta_slice1']['values']
+            
+            cutoff = int(len(beta0_values) * 0.8)
+            final_beta0 = np.array(beta0_values[cutoff:])
+            final_beta1 = np.array(beta1_values[cutoff:])
+            
+            beta0_mean = float(np.mean(final_beta0))
+            beta0_std = float(np.std(final_beta0))
+            beta1_mean = float(np.mean(final_beta1))
+            beta1_std = float(np.std(final_beta1))
+            
+            global_beta0_str = f"{beta0_mean:.4f} $\\pm$ {beta0_std:.4f}"
+            global_beta1_str = f"{beta1_mean:.4f} $\\pm$ {beta1_std:.4f}"
+            
+            print(f"    β₀: {global_beta0_str}")
+            print(f"    β₁: {global_beta1_str}")
+            
+            # Compute JFI
+            s0 = 1.0 - beta0_mean
+            s1 = 1.0 - beta1_mean
+            global_jfi = (s0 + s1)**2 / (2 * (s0**2 + s1**2)) if (s0**2 + s1**2) > 0 else 0.0
+            global_jfi_str = f"{global_jfi:.4f}"
+            
+            print(f"    JFI: {global_jfi_str}")
+        else:
+            print(f"    Has per-slice data: NO")
+            global_beta0_str = "---"
+            global_beta1_str = "---"
+            global_jfi_str = "---"
+        
         global_row = {
             'scenario': display_name,
             'reward': 'Global',
             'global_beta': global_beta_str,
-            'beta0': '---',
-            'beta1': '---',
-            'jfi': '---'
+            'beta0': global_beta0_str,
+            'beta1': global_beta1_str,
+            'jfi': global_jfi_str
         }
         rows.append(global_row)
         
         # --- Uniform Reward Row ---
+        print(f"\n  Processing {scenario_key} (Uniform):")
+        
         uniform_stats = uniform_exp['statistics'].get('beta', {})
         uniform_mean = uniform_stats.get('last_100_mean', uniform_stats.get('mean'))
         uniform_std = uniform_stats.get('last_100_std', uniform_stats.get('std'))
         
         if uniform_mean is not None and uniform_std is not None:
             uniform_beta_str = f"{uniform_mean:.4f} $\\pm$ {uniform_std:.4f}"
+            print(f"    Global β: {uniform_beta_str}")
         else:
             uniform_beta_str = "---"
+            print(f"    Global β: N/A")
         
-        # Compute per-slice stats
+        # Compute per-slice stats for Uniform reward
         beta0_values = uniform_exp['data']['dti_beta_slice0']['values']
         beta1_values = uniform_exp['data']['dti_beta_slice1']['values']
         
-        # Use final 20% (last 100 of 500 episodes ≈ last 20%)
         cutoff = int(len(beta0_values) * 0.8)
         final_beta0 = np.array(beta0_values[cutoff:])
         final_beta1 = np.array(beta1_values[cutoff:])
@@ -2213,22 +2348,27 @@ def generate_ablation_table(experiments, output_dir):
         beta1_mean = float(np.mean(final_beta1))
         beta1_std = float(np.std(final_beta1))
         
-        beta0_str = f"{beta0_mean:.4f} $\\pm$ {beta0_std:.4f}"
-        beta1_str = f"{beta1_mean:.4f} $\\pm$ {beta1_std:.4f}"
+        uniform_beta0_str = f"{beta0_mean:.4f} $\\pm$ {beta0_std:.4f}"
+        uniform_beta1_str = f"{beta1_mean:.4f} $\\pm$ {beta1_std:.4f}"
+        
+        print(f"    β₀: {uniform_beta0_str}")
+        print(f"    β₁: {uniform_beta1_str}")
         
         # Compute JFI
         s0 = 1.0 - beta0_mean
         s1 = 1.0 - beta1_mean
-        jfi = (s0 + s1)**2 / (2 * (s0**2 + s1**2)) if (s0**2 + s1**2) > 0 else 0.0
-        jfi_str = f"{jfi:.4f}"
+        uniform_jfi = (s0 + s1)**2 / (2 * (s0**2 + s1**2)) if (s0**2 + s1**2) > 0 else 0.0
+        uniform_jfi_str = f"{uniform_jfi:.4f}"
+        
+        print(f"    JFI: {uniform_jfi_str}")
         
         uniform_row = {
             'scenario': '',  # Empty for multirow
             'reward': 'Uniform',
             'global_beta': uniform_beta_str,
-            'beta0': beta0_str,
-            'beta1': beta1_str,
-            'jfi': jfi_str
+            'beta0': uniform_beta0_str,
+            'beta1': uniform_beta1_str,
+            'jfi': uniform_jfi_str
         }
         rows.append(uniform_row)
     
@@ -2268,11 +2408,475 @@ def generate_ablation_table(experiments, output_dir):
     with open(output_path, 'w') as f:
         f.write(latex)
     
-    print(f"  ✓ table_ablation_results.tex")
+    print(f"\n  ✓ table_ablation_results.tex")
     print(f"    Scenarios: {len(complete_scenarios)}")
  
+# ============================================================================
+# FIGURE: Dynamic Scenarios - Reward Formulation Comparison
+# ============================================================================
  
-
+def fig_dynamic_ablation_comparison(experiments, output_dir):
+    """
+    Compare Global vs Uniform reward for both dynamic ranges.
+    
+    Shows 4 subplots:
+    - [L,M,H] Global β evolution
+    - [L,M,H] Uniform β evolution
+    - [EL,L,M,H,EH] Global β evolution
+    - [EL,L,M,H,EH] Uniform β evolution
+    """
+    print("\n[Figure] Dynamic Scenarios Ablation...")
+    
+    # Find dynamic experiments
+    dynamic_exps = [e for e in experiments if e['category'] == 'dynamic']
+    
+    if len(dynamic_exps) < 4:
+        print(f"  ⚠️  Need 4 dynamic experiments, found {len(dynamic_exps)}")
+        return
+    
+    # Group by range
+    # Heuristic: count number of profiles in scenario
+    # [L,M,H] = 3 profiles
+    # [EL,L,M,H,EH] = 5 profiles
+    
+    range_3 = {'global': None, 'uniform': None}  # [L,M,H]
+    range_5 = {'global': None, 'uniform': None}  # [EL,L,M,H,EH]
+    
+    for exp in dynamic_exps:
+        # Count unique profiles in scenario
+        scenario = exp['scenario']
+        num_profiles = len(set(scenario.values()))
+        
+        # Determine if Global or Uniform based on run date or per-slice data
+        has_per_slice = 'dti_beta_slice0' in exp['data'] and 'dti_beta_slice1' in exp['data']
+        
+        # March 17/18 runs = might be Global or Uniform, need better detection
+        # For now, use per-slice presence as heuristic
+        run_name = exp['run_name']
+        
+        # Better heuristic: older runs (March 7, March 13-14) vs newer (March 17-18)
+        if '20260307' in run_name or '202603' in run_name[:8]:
+            reward_type = 'global'
+        else:
+            reward_type = 'uniform'
+        
+        # Actually, since you said both have per-slice data, we need different logic
+        # Let's use alphabetical order of run names as proxy
+        # Or count them: first occurrence = global, second = uniform
+        
+        if num_profiles == 3:
+            if range_3['global'] is None:
+                range_3['global'] = exp
+            elif range_3['uniform'] is None:
+                range_3['uniform'] = exp
+        elif num_profiles >= 4:  # 5 or more
+            if range_5['global'] is None:
+                range_5['global'] = exp
+            elif range_5['uniform'] is None:
+                range_5['uniform'] = exp
+    
+    # Check what we found
+    print(f"  Range [L,M,H]: global={range_3['global'] is not None}, uniform={range_3['uniform'] is not None}")
+    print(f"  Range [EL,L,M,H,EH]: global={range_5['global'] is not None}, uniform={range_5['uniform'] is not None}")
+    
+    if not (range_3['global'] and range_3['uniform'] and range_5['global'] and range_5['uniform']):
+        print("  ⚠️  Missing experiments for complete comparison")
+        print("\n  Available dynamic experiments:")
+        for exp in dynamic_exps:
+            scenario = exp['scenario']
+            num_profiles = len(set(scenario.values()))
+            has_slice = 'dti_beta_slice0' in exp['data']
+            print(f"    - {exp['run_name']}: {num_profiles} profiles, per_slice={has_slice}")
+        return
+    
+    # Create 2x2 subplot
+    fig, axes = plt.subplots(2, 2, figsize=(16, 10))
+    
+    # Subplot 1: [L,M,H] Global
+    ax = axes[0, 0]
+    data = range_3['global']['data']
+    if 'dti_beta' in data:
+        steps = np.array(data['dti_beta']['steps'])
+        values = np.array(data['dti_beta']['values'])
+        ax.plot(steps, values, color='steelblue', alpha=0.7, linewidth=1.5, label='Global β')
+        
+        # Add per-slice if available
+        if 'dti_beta_slice0' in data:
+            ax.plot(steps, np.array(data['dti_beta_slice0']['values']), 
+                   color='lightskyblue', alpha=0.5, linewidth=1, linestyle='--', label='β₀')
+        if 'dti_beta_slice1' in data:
+            ax.plot(steps, np.array(data['dti_beta_slice1']['values']), 
+                   color='lightcoral', alpha=0.5, linewidth=1, linestyle='--', label='β₁')
+    
+    ax.set_xlabel('DTI', fontsize=11)
+    ax.set_ylabel('β', fontsize=11)
+    ax.set_title('[L,M,H] Range - Global β Reward', fontsize=12, fontweight='bold')
+    ax.legend(loc='best', fontsize=9)
+    ax.grid(True, alpha=0.3)
+    ax.set_ylim([0, 1.05])
+    
+    # Subplot 2: [L,M,H] Uniform
+    ax = axes[0, 1]
+    data = range_3['uniform']['data']
+    if 'dti_beta' in data:
+        steps = np.array(data['dti_beta']['steps'])
+        values = np.array(data['dti_beta']['values'])
+        ax.plot(steps, values, color='coral', alpha=0.7, linewidth=1.5, label='Global β')
+        
+        if 'dti_beta_slice0' in data:
+            ax.plot(steps, np.array(data['dti_beta_slice0']['values']), 
+                   color='lightskyblue', alpha=0.5, linewidth=1, linestyle='--', label='β₀')
+        if 'dti_beta_slice1' in data:
+            ax.plot(steps, np.array(data['dti_beta_slice1']['values']), 
+                   color='lightcoral', alpha=0.5, linewidth=1, linestyle='--', label='β₁')
+    
+    ax.set_xlabel('DTI', fontsize=11)
+    ax.set_ylabel('β', fontsize=11)
+    ax.set_title('[L,M,H] Range - Uniform Weighted Reward', fontsize=12, fontweight='bold')
+    ax.legend(loc='best', fontsize=9)
+    ax.grid(True, alpha=0.3)
+    ax.set_ylim([0, 1.05])
+    
+    # Subplot 3: [EL,L,M,H,EH] Global
+    ax = axes[1, 0]
+    data = range_5['global']['data']
+    if 'dti_beta' in data:
+        steps = np.array(data['dti_beta']['steps'])
+        values = np.array(data['dti_beta']['values'])
+        ax.plot(steps, values, color='steelblue', alpha=0.7, linewidth=1.5, label='Global β')
+        
+        if 'dti_beta_slice0' in data:
+            ax.plot(steps, np.array(data['dti_beta_slice0']['values']), 
+                   color='lightskyblue', alpha=0.5, linewidth=1, linestyle='--', label='β₀')
+        if 'dti_beta_slice1' in data:
+            ax.plot(steps, np.array(data['dti_beta_slice1']['values']), 
+                   color='lightcoral', alpha=0.5, linewidth=1, linestyle='--', label='β₁')
+    
+    ax.set_xlabel('DTI', fontsize=11)
+    ax.set_ylabel('β', fontsize=11)
+    ax.set_title('[EL,L,M,H,EH] Range - Global β Reward', fontsize=12, fontweight='bold')
+    ax.legend(loc='best', fontsize=9)
+    ax.grid(True, alpha=0.3)
+    ax.set_ylim([0, 1.05])
+    
+    # Subplot 4: [EL,L,M,H,EH] Uniform
+    ax = axes[1, 1]
+    data = range_5['uniform']['data']
+    if 'dti_beta' in data:
+        steps = np.array(data['dti_beta']['steps'])
+        values = np.array(data['dti_beta']['values'])
+        ax.plot(steps, values, color='coral', alpha=0.7, linewidth=1.5, label='Global β')
+        
+        if 'dti_beta_slice0' in data:
+            ax.plot(steps, np.array(data['dti_beta_slice0']['values']), 
+                   color='lightskyblue', alpha=0.5, linewidth=1, linestyle='--', label='β₀')
+        if 'dti_beta_slice1' in data:
+            ax.plot(steps, np.array(data['dti_beta_slice1']['values']), 
+                   color='lightcoral', alpha=0.5, linewidth=1, linestyle='--', label='β₁')
+    
+    ax.set_xlabel('DTI', fontsize=11)
+    ax.set_ylabel('β', fontsize=11)
+    ax.set_title('[EL,L,M,H,EH] Range - Uniform Weighted Reward', fontsize=12, fontweight='bold')
+    ax.legend(loc='best', fontsize=9)
+    ax.grid(True, alpha=0.3)
+    ax.set_ylim([0, 1.05])
+    
+    plt.suptitle('Dynamic Traffic Adaptation: Global vs Uniform Reward Across Traffic Ranges', 
+                fontsize=14, fontweight='bold', y=0.995)
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, f'fig_dynamic_ablation_comparison.{FIGURE_FORMAT}'), 
+                dpi=FIGURE_DPI, bbox_inches='tight')
+    plt.close()
+    print(f"  ✓ fig_dynamic_ablation_comparison.{FIGURE_FORMAT}")
+ 
+ 
+# ============================================================================
+# FIGURE: Bar Chart Comparison - Final Performance
+# ============================================================================
+ 
+def fig_dynamic_ablation_bar_chart(experiments, output_dir):
+    """
+    Bar chart comparing final performance across dynamic scenarios.
+    Shows Global β, β₀, β₁, and JFI for both ranges and reward types.
+    """
+    print("\n[Figure] Dynamic Scenarios Performance Comparison...")
+    
+    dynamic_exps = [e for e in experiments if e['category'] == 'dynamic']
+    
+    # Group by range
+    range_3 = {'global': None, 'uniform': None}
+    range_5 = {'global': None, 'uniform': None}
+    
+    for exp in dynamic_exps:
+        scenario = exp['scenario']
+        num_profiles = len(set(scenario.values()))
+        
+        if num_profiles == 3:
+            if range_3['global'] is None:
+                range_3['global'] = exp
+            elif range_3['uniform'] is None:
+                range_3['uniform'] = exp
+        elif num_profiles >= 4:
+            if range_5['global'] is None:
+                range_5['global'] = exp
+            elif range_5['uniform'] is None:
+                range_5['uniform'] = exp
+    
+    # Check completeness
+    if not all([range_3['global'], range_3['uniform'], range_5['global'], range_5['uniform']]):
+        print("  ⚠️  Missing experiments")
+        return
+    
+    # Collect statistics
+    scenarios = ['[L,M,H]\nGlobal', '[L,M,H]\nUniform', 
+                '[EL,L,M,H,EH]\nGlobal', '[EL,L,M,H,EH]\nUniform']
+    
+    experiments_ordered = [
+        range_3['global'],
+        range_3['uniform'],
+        range_5['global'],
+        range_5['uniform']
+    ]
+    
+    global_betas = []
+    beta0s = []
+    beta1s = []
+    jfis = []
+    
+    for exp in experiments_ordered:
+        # Global beta
+        stats = exp['statistics'].get('beta', {})
+        beta_mean = stats.get('last_100_mean', stats.get('mean', 0))
+        global_betas.append(beta_mean if beta_mean else 0)
+        
+        # Per-slice
+        if 'dti_beta_slice0' in exp['data'] and 'dti_beta_slice1' in exp['data']:
+            beta0_vals = np.array(exp['data']['dti_beta_slice0']['values'])
+            beta1_vals = np.array(exp['data']['dti_beta_slice1']['values'])
+            
+            cutoff = int(len(beta0_vals) * 0.8)
+            beta0_mean = float(np.mean(beta0_vals[cutoff:]))
+            beta1_mean = float(np.mean(beta1_vals[cutoff:]))
+            
+            beta0s.append(beta0_mean)
+            beta1s.append(beta1_mean)
+            
+            # JFI
+            s0 = 1.0 - beta0_mean
+            s1 = 1.0 - beta1_mean
+            jfi = (s0 + s1)**2 / (2 * (s0**2 + s1**2)) if (s0**2 + s1**2) > 0 else 0
+            jfis.append(jfi)
+        else:
+            beta0s.append(0)
+            beta1s.append(0)
+            jfis.append(0)
+    
+    # Create grouped bar chart
+    fig, ax = plt.subplots(figsize=(12, 6))
+    
+    x = np.arange(len(scenarios))
+    width = 0.2
+    
+    ax.bar(x - 1.5*width, global_betas, width, label='Global β',
+           color='steelblue', alpha=0.8, edgecolor='black', linewidth=1.2)
+    ax.bar(x - 0.5*width, beta0s, width, label='β₀',
+           color='lightskyblue', alpha=0.8, edgecolor='black', linewidth=1.2)
+    ax.bar(x + 0.5*width, beta1s, width, label='β₁',
+           color='lightcoral', alpha=0.8, edgecolor='black', linewidth=1.2)
+    ax.bar(x + 1.5*width, jfis, width, label='JFI',
+           color='lightgreen', alpha=0.8, edgecolor='black', linewidth=1.2)
+    
+    ax.set_xlabel('Scenario', fontsize=12)
+    ax.set_ylabel('Metric Value', fontsize=12)
+    ax.set_title('Dynamic Traffic: Performance Across Ranges and Reward Formulations',
+                fontsize=14, fontweight='bold')
+    ax.set_xticks(x)
+    ax.set_xticklabels(scenarios, fontsize=10)
+    ax.legend(loc='upper right', framealpha=0.9, fontsize=10)
+    ax.grid(True, alpha=0.3, axis='y')
+    ax.set_ylim([0, 1.05])
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, f'fig_dynamic_ablation_bar.{FIGURE_FORMAT}'),
+                dpi=FIGURE_DPI, bbox_inches='tight')
+    plt.close()
+    print(f"  ✓ fig_dynamic_ablation_bar.{FIGURE_FORMAT}")
+ 
+ 
+# ============================================================================
+# TABLE: Dynamic Scenarios Ablation
+# ============================================================================
+ 
+def generate_dynamic_ablation_table(experiments, output_dir):
+    """
+    LaTeX table for dynamic scenarios ablation study.
+    
+    Rows: Traffic Range × Reward Type
+    Columns: Global β, β₀, β₁, JFI
+    """
+    print("\n[Table] Dynamic Scenarios Ablation...")
+    
+    dynamic_exps = [e for e in experiments if e['category'] == 'dynamic']
+    
+    if len(dynamic_exps) < 4:
+        print(f"  ⚠️  Need 4 dynamic experiments, found {len(dynamic_exps)}")
+        return
+    
+    # Group by range
+    range_3 = {'global': None, 'uniform': None}
+    range_5 = {'global': None, 'uniform': None}
+    
+    for exp in dynamic_exps:
+        scenario = exp['scenario']
+        num_profiles = len(set(scenario.values()))
+        
+        if num_profiles == 3:
+            if range_3['global'] is None:
+                range_3['global'] = exp
+            elif range_3['uniform'] is None:
+                range_3['uniform'] = exp
+        elif num_profiles >= 4:
+            if range_5['global'] is None:
+                range_5['global'] = exp
+            elif range_5['uniform'] is None:
+                range_5['uniform'] = exp
+    
+    if not all([range_3['global'], range_3['uniform'], range_5['global'], range_5['uniform']]):
+        print("  ⚠️  Missing experiments")
+        return
+    
+    # Build table rows
+    rows = []
+    
+    # Helper to compute stats
+    def compute_row_stats(exp):
+        # Global beta
+        stats = exp['statistics'].get('beta', {})
+        beta_mean = stats.get('last_100_mean', stats.get('mean'))
+        beta_std = stats.get('last_100_std', stats.get('std'))
+        
+        if beta_mean is not None and beta_std is not None:
+            global_beta_str = f"{beta_mean:.4f} $\\pm$ {beta_std:.4f}"
+        else:
+            global_beta_str = "---"
+        
+        # Per-slice
+        if 'dti_beta_slice0' in exp['data'] and 'dti_beta_slice1' in exp['data']:
+            beta0_vals = np.array(exp['data']['dti_beta_slice0']['values'])
+            beta1_vals = np.array(exp['data']['dti_beta_slice1']['values'])
+            
+            cutoff = int(len(beta0_vals) * 0.8)
+            final_beta0 = beta0_vals[cutoff:]
+            final_beta1 = beta1_vals[cutoff:]
+            
+            beta0_mean = float(np.mean(final_beta0))
+            beta0_std = float(np.std(final_beta0))
+            beta1_mean = float(np.mean(final_beta1))
+            beta1_std = float(np.std(final_beta1))
+            
+            beta0_str = f"{beta0_mean:.4f} $\\pm$ {beta0_std:.4f}"
+            beta1_str = f"{beta1_mean:.4f} $\\pm$ {beta1_std:.4f}"
+            
+            # JFI
+            s0 = 1.0 - beta0_mean
+            s1 = 1.0 - beta1_mean
+            jfi = (s0 + s1)**2 / (2 * (s0**2 + s1**2)) if (s0**2 + s1**2) > 0 else 0
+            jfi_str = f"{jfi:.4f}"
+        else:
+            beta0_str = "---"
+            beta1_str = "---"
+            jfi_str = "---"
+        
+        return global_beta_str, beta0_str, beta1_str, jfi_str
+    
+    # Range [L,M,H]
+    range_name = '[L, M, H]'
+    
+    # Global reward
+    g_beta, g_b0, g_b1, g_jfi = compute_row_stats(range_3['global'])
+    rows.append({
+        'range': range_name,
+        'reward': 'Global',
+        'global_beta': g_beta,
+        'beta0': g_b0,
+        'beta1': g_b1,
+        'jfi': g_jfi
+    })
+    
+    # Uniform reward
+    u_beta, u_b0, u_b1, u_jfi = compute_row_stats(range_3['uniform'])
+    rows.append({
+        'range': '',
+        'reward': 'Uniform',
+        'global_beta': u_beta,
+        'beta0': u_b0,
+        'beta1': u_b1,
+        'jfi': u_jfi
+    })
+    
+    # Range [EL,L,M,H,EH]
+    range_name = '[EL, L, M, H, EH]'
+    
+    # Global reward
+    g_beta, g_b0, g_b1, g_jfi = compute_row_stats(range_5['global'])
+    rows.append({
+        'range': range_name,
+        'reward': 'Global',
+        'global_beta': g_beta,
+        'beta0': g_b0,
+        'beta1': g_b1,
+        'jfi': g_jfi
+    })
+    
+    # Uniform reward
+    u_beta, u_b0, u_b1, u_jfi = compute_row_stats(range_5['uniform'])
+    rows.append({
+        'range': '',
+        'reward': 'Uniform',
+        'global_beta': u_beta,
+        'beta0': u_b0,
+        'beta1': u_b1,
+        'jfi': u_jfi
+    })
+    
+    # Generate LaTeX
+    latex = r"""\begin{table}[!t]
+\caption{Dynamic Traffic Ablation: Performance Across Traffic Ranges and Reward Formulations
+(Mean $\pm$ Std, Last 100 of 500 Episodes)}
+\label{tab:dynamic_ablation}
+\centering
+\begin{tabular}{@{}llcccc@{}}
+\toprule
+\textbf{Traffic Range} & \textbf{Reward} & \textbf{Global $\beta$}
+  & \textbf{$\beta_0$} & \textbf{$\beta_1$} & \textbf{JFI} \\
+\midrule
+"""
+    
+    # Add rows
+    for i, row in enumerate(rows):
+        if row['range']:  # First row of range (Global)
+            latex += f"\\multirow{{2}}{{*}}{{{row['range']}}}\n"
+            latex += f"  & {row['reward']}  & {row['global_beta']} & {row['beta0']} & {row['beta1']} & {row['jfi']} \\\\\n"
+        else:  # Second row (Uniform)
+            latex += f"  & {row['reward']}  & {row['global_beta']} & {row['beta0']} & {row['beta1']} & {row['jfi']} \\\\\n"
+            
+            # Add midrule after each range (except last)
+            if i < len(rows) - 1:
+                latex += "\\midrule\n"
+    
+    latex += r"""\bottomrule
+\end{tabular}
+\end{table}
+"""
+    
+    # Save
+    output_path = os.path.join(output_dir, 'table_dynamic_ablation.tex')
+    with open(output_path, 'w') as f:
+        f.write(latex)
+    
+    print(f"  ✓ table_dynamic_ablation.tex")
+ 
+ 
 # ============================================================================
 # MAIN
 # ============================================================================
@@ -2365,6 +2969,16 @@ def main():
 
     generate_per_slice_beta_table(experiments, args.output_dir)
     generate_ablation_table(experiments, args.output_dir)
+
+    # Dynamic scenarios ablation study
+    print("\n" + "="*80)
+    print("GENERATING DYNAMIC SCENARIOS ABLATION")
+    print("="*80)
+    
+    fig_dynamic_ablation_comparison(experiments, args.output_dir)
+    fig_dynamic_ablation_bar_chart(experiments, args.output_dir)
+    generate_dynamic_ablation_table(experiments, args.output_dir)
+
     
     # Generate table
     print("\n" + "="*80)
