@@ -132,22 +132,23 @@ def _single_timeseries(data, xlabel, ylabel, title, color, out_path, label):
 def _multi_timeseries(exps, metric_key, xlabel, ylabel, title,
                       colors, out_path, label_key):
     """
-    Plot one time-series curve per experiment on the same axes.
+    Plot one smoothed trend-line per experiment on the same axes.
     Each curve is labelled by its dynamic profile pool abbreviation.
+    Only the moving-average line is drawn — no faded raw trace.
     """
     fig, ax = plt.subplots(figsize=(10, 6))
     plotted = 0
     for exp, color in zip(exps, colors):
         if metric_key not in exp['data']:
             continue
-        pool     = exp.get('dynamic_profile_set', [])
+        pool        = exp.get('dynamic_profile_set', [])
         curve_label = f"[{abbrev_profile(pool)}]" if pool else exp['scenario_str']
         steps  = np.array(exp['data'][metric_key]['steps'])
         values = np.array(exp['data'][metric_key]['values'])
-        ax.plot(steps, values, alpha=0.6, color=color, linewidth=1)
-        # Moving average for a cleaner trend line
-        if len(values) >= 20:
-            window = min(20, len(values) // 5)
+
+        # Smoothed trend line only — window = 10% of series length, min 10
+        window = max(10, len(values) // 10)
+        if len(values) >= window:
             ma = np.convolve(values, np.ones(window) / window, mode='valid')
             ax.plot(steps[window - 1:], ma, color=color, linewidth=2,
                     label=curve_label)
@@ -327,12 +328,9 @@ def fig1_training_convergence(experiments, output_dir):
                 steps  = np.array(exp['data'][metric_key]['steps'])
                 values = np.array(exp['data'][metric_key]['values'])
 
-                # Faint raw trace
-                ax.plot(steps, values, alpha=0.15, color=color,
-                        linewidth=0.8, linestyle=ls)
-                # Moving-average trend line (labelled)
-                if len(values) >= 20:
-                    window = min(20, len(values) // 5)
+                # Smoothed trend line only — no faded raw trace
+                window = max(10, len(values) // 10)
+                if len(values) >= window:
                     ma = np.convolve(values, np.ones(window) / window, mode='valid')
                     ax.plot(steps[window - 1:], ma, color=color, linewidth=2,
                             linestyle=ls, label=label)
