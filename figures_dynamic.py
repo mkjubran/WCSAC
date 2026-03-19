@@ -324,15 +324,14 @@ def _fig5_continuous_beta(data, output_dir, episode, label):
 
 def fig_actor_loss_comparison(experiments, output_dir):
     """
-    Training actor loss comparison between two dynamic experiments with
-    different profile pools (e.g. [L,M,H] vs [EL,L,M,H,EH]).
-
-    Falls back to any two experiments with actor loss data if fewer than
-    two dynamic runs are available.
+    Training actor loss comparison:
+      • One curve per distinct dynamic profile pool (e.g. [L,M,H] and [EL,L,M,H,EH]).
+      • One curve for the global-reward heterogeneous L-H scenario (if available).
+    Colors are clearly distinct: orange, dark green, purple.
     """
     print("\n[Figure] Actor Loss Comparison...")
 
-    # Prefer dynamic experiments; pick one per distinct pool size
+    # ── Dynamic experiments: one per distinct pool size ───────────────────────
     dynamic_with_loss = [
         e for e in experiments
         if e['category'] == 'dynamic'
@@ -345,33 +344,37 @@ def fig_actor_loss_comparison(experiments, output_dir):
         pool_size = len(exp.get('dynamic_profile_set', []))
         if pool_size not in seen_pool_sizes:
             seen_pool_sizes[pool_size] = exp
-            pool = exp.get('dynamic_profile_set', [])
+            pool  = exp.get('dynamic_profile_set', [])
             label = f"Dynamic [{abbrev_profile(pool)}]" if pool else exp['scenario_str']
             to_plot.append((label, exp))
         if len(to_plot) == 2:
             break
 
-    # If we couldn't find two distinct dynamic pools, fall back to any two experiments
-    if len(to_plot) < 2:
-        for exp in experiments:
-            if exp in [t[1] for t in to_plot]:
-                continue
-            if 'episode_actor_loss' in exp.get('data', {}):
-                pool = exp.get('dynamic_profile_set', [])
-                if pool:
-                    label = f"[{abbrev_profile(pool)}]"
-                else:
-                    label = f"{exp['category'].title()} ({abbrev_scenario_str(exp['scenario_str'])})"
-                to_plot.append((label, exp))
-            if len(to_plot) == 2:
+    # ── Heterogeneous L-H scenario (global reward) ───────────────────────────
+    # Match on the abbreviated scenario_str produced by step1, e.g. 'Low - High'
+    # abbrev_scenario_str converts it to 'L - H'.
+    hetero_lh = None
+    for exp in experiments:
+        if (exp['category'] == 'static_heterogeneous'
+                and exp.get('reward_formulation', 'global') == 'global'
+                and 'episode_actor_loss' in exp.get('data', {})):
+            abbrev = abbrev_scenario_str(exp['scenario_str'])
+            if abbrev == 'L - H':
+                hetero_lh = exp
                 break
+
+    if hetero_lh is not None:
+        to_plot.append((f"Heterogeneous [{abbrev_scenario_str(hetero_lh['scenario_str'])}]",
+                        hetero_lh))
+    else:
+        print("  ℹ️  No global-reward heterogeneous L-H experiment with actor loss found")
 
     if not to_plot:
         print("  ⚠️  No actor loss data available")
         return
 
-    # Clearly distinct colors: orange and dark green
-    colors = ['#d95f02', '#1b7837']
+    # Clearly distinct colors: orange, dark green, purple
+    colors = ['#d95f02', '#1b7837', '#7b2d8b']
 
     fig, ax = plt.subplots(figsize=(10, 6))
     for (label, exp), color in zip(to_plot, colors):
