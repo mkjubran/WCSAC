@@ -129,6 +129,48 @@ def _single_timeseries(data, xlabel, ylabel, title, color, out_path, label):
     print(f"  ✓ {os.path.basename(out_path)}")
 
 
+def _multi_timeseries(exps, metric_key, xlabel, ylabel, title,
+                      colors, out_path, label_key):
+    """
+    Plot one time-series curve per experiment on the same axes.
+    Each curve is labelled by its dynamic profile pool abbreviation.
+    """
+    fig, ax = plt.subplots(figsize=(10, 6))
+    plotted = 0
+    for exp, color in zip(exps, colors):
+        if metric_key not in exp['data']:
+            continue
+        pool     = exp.get('dynamic_profile_set', [])
+        curve_label = f"[{abbrev_profile(pool)}]" if pool else exp['scenario_str']
+        steps  = np.array(exp['data'][metric_key]['steps'])
+        values = np.array(exp['data'][metric_key]['values'])
+        ax.plot(steps, values, alpha=0.6, color=color, linewidth=1)
+        # Moving average for a cleaner trend line
+        if len(values) >= 20:
+            window = min(20, len(values) // 5)
+            ma = np.convolve(values, np.ones(window) / window, mode='valid')
+            ax.plot(steps[window - 1:], ma, color=color, linewidth=2,
+                    label=curve_label)
+        else:
+            ax.plot(steps, values, color=color, linewidth=2, label=curve_label)
+        plotted += 1
+
+    if not plotted:
+        plt.close(fig)
+        print(f"  ⚠️  No data for {label_key}")
+        return
+
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    ax.set_title(title)
+    ax.legend(loc='best', framealpha=0.9)
+    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=FIGURE_DPI, bbox_inches='tight')
+    plt.close()
+    print(f"  ✓ {os.path.basename(out_path)} ({plotted} scenarios)")
+
+
 # ---------------------------------------------------------------------------
 # Figure 1: Training Convergence
 # ---------------------------------------------------------------------------
@@ -182,38 +224,124 @@ def fig1_training_convergence(experiments, output_dir):
             label_key=f'fig1b{sfx}',
         )
 
-        # 1c/1d: Dynamic time-series — first dynamic exp for this formulation
+        # 1c/1d: Dynamic time-series — all pools for this reward formulation,
+        # each pool as a separate curve on the same axes.
         if not dynamic_exps:
             print(f"  ℹ️  No {rf} dynamic experiments for fig1c/1d")
             continue
 
-        dyn_exp  = dynamic_exps[0]
-        pool     = dyn_exp.get('dynamic_profile_set', [])
-        pool_str = f" [{abbrev_profile(pool)}]" if pool else ''
+        # Group by pool size so each distinct pool gets one curve
+        seen_pools = {}
+        for exp in dynamic_exps:
+            pool      = tuple(exp.get('dynamic_profile_set', []))
+            pool_size = len(pool)
+            if pool_size not in seen_pools:
+                seen_pools[pool_size] = exp
 
-        if 'episode_reward' in dyn_exp['data']:
-            _single_timeseries(
-                data=dyn_exp['data']['episode_reward'],
-                xlabel=LABEL_EPISODE, ylabel=LABEL_REWARD,
-                title=f'Training Convergence (Dynamic{pool_str}): '
-                      f'Episode Reward — {rf_title} Reward',
-                color=COLOR_REWARD,
-                out_path=os.path.join(output_dir,
-                                      f'fig1c_dynamic_reward{sfx}.{FIGURE_FORMAT}'),
-                label=f'fig1c{sfx}',
-            )
+        # Sort pools smallest→largest for consistent ordering
+        pool_exps = [seen_pools[k] for k in sorted(seen_pools)]
 
-        if 'episode_beta' in dyn_exp['data']:
-            _single_timeseries(
-                data=dyn_exp['data']['episode_beta'],
-                xlabel=LABEL_EPISODE, ylabel=LABEL_BETA,
-                title=f'Training Convergence (Dynamic{pool_str}): '
-                      f'QoS Performance — {rf_title} Reward',
-                color=COLOR_BETA,
-                out_path=os.path.join(output_dir,
-                                      f'fig1d_dynamic_beta{sfx}.{FIGURE_FORMAT}'),
-                label=f'fig1d{sfx}',
-            )
+        # Colour palette for the curves (one per pool)
+        curve_colors = ['#377eb8', '#e41a1c', '#4daf4a', '#984ea3']
+
+        # fig1c: Episode Reward
+        _multi_timeseries(
+            exps=pool_exps,
+            metric_key='episode_reward',
+            xlabel=LABEL_EPISODE,
+            ylabel=LABEL_REWARD,
+            title=f'Training Convergence (Dynamic): Episode Reward — {rf_title} Reward',
+            colors=curve_colors,
+            out_path=os.path.join(output_dir,
+                                  f'fig1c_dynamic_reward{sfx}.{FIGURE_FORMAT}'),
+            label_key=f'fig1c{sfx}',
+        )
+
+        # fig1d: QoS Performance
+        _multi_timeseries(
+            exps=pool_exps,
+            metric_key='episode_beta',
+            xlabel=LABEL_EPISODE,
+            ylabel=LABEL_BETA,
+            title=f'Training Convergence (Dynamic): QoS Performance — {rf_title} Reward',
+            colors=curve_colors,
+            out_path=os.path.join(output_dir,
+                                  f'fig1d_dynamic_beta{sfx}.{FIGURE_FORMAT}'),
+            label_key=f'fig1d{sfx}',
+        )
+
+    # ── Combined figures: 4 curves each (all pools × all reward formulations) ──
+    # Collect one experiment per (pool_size, reward_formulation) combination.
+    # Color encodes reward formulation; line style encodes pool.
+    # Blues  (#377eb8 solid, #377eb8 dashed)  → global
+    # Oranges (#d95f02 solid, #d95f02 dashed) → weighted
+    # Solid  → smaller pool  (e.g. [L,M,H])
+    # Dashed → larger pool   (e.g. [EL,L,M,H,EH])
+
+    rf_color = {'global': '#377eb8', 'weighted': '#d95f02'}
+    pool_style = {}   # pool_size → linestyle, filled in below
+
+    # Gather all unique (pool_size, rf) combos from dynamic experiments
+    combos = {}   # (pool_size, rf) → exp
+    for exp in experiments:
+        if exp['category'] != 'dynamic':
+            continue
+        rf        = exp.get('reward_formulation', 'global')
+        pool_size = len(exp.get('dynamic_profile_set', []))
+        key       = (pool_size, rf)
+        if key not in combos:
+            combos[key] = exp
+
+    if combos:
+        # Assign line styles to pool sizes: smallest pool → solid, rest → dashed styles
+        for i, ps in enumerate(sorted({k[0] for k in combos})):
+            pool_style[ps] = ['-', '--', ':', '-.'][i % 4]
+
+        for metric_key, ylabel, fname_base, title_base in [
+            ('episode_reward', LABEL_REWARD,
+             'fig1c_dynamic_reward_combined',
+             'Training Convergence (Dynamic): Episode Reward'),
+            ('episode_beta', LABEL_BETA,
+             'fig1d_dynamic_beta_combined',
+             'Training Convergence (Dynamic): QoS Performance'),
+        ]:
+            fig, ax = plt.subplots(figsize=(10, 6))
+            plotted = 0
+
+            for (pool_size, rf), exp in sorted(combos.items()):
+                if metric_key not in exp['data']:
+                    continue
+                pool  = exp.get('dynamic_profile_set', [])
+                color = rf_color.get(rf, 'gray')
+                ls    = pool_style.get(pool_size, '-')
+                pool_abbrev = abbrev_profile(pool) if pool else exp['scenario_str']
+                label = f"[{pool_abbrev}] {rf.capitalize()}"
+
+                steps  = np.array(exp['data'][metric_key]['steps'])
+                values = np.array(exp['data'][metric_key]['values'])
+                ax.plot(steps, values, alpha=0.2, color=color, linewidth=0.8,
+                        linestyle=ls)
+                if len(values) >= 20:
+                    window = min(20, len(values) // 5)
+                    ma = np.convolve(values, np.ones(window) / window, mode='valid')
+                    ax.plot(steps[window - 1:], ma, color=color, linewidth=2,
+                            linestyle=ls, label=label)
+                else:
+                    ax.plot(steps, values, color=color, linewidth=2,
+                            linestyle=ls, label=label)
+                plotted += 1
+
+            if plotted:
+                ax.set_xlabel(LABEL_EPISODE)
+                ax.set_ylabel(ylabel)
+                ax.set_title(title_base)
+                ax.legend(loc='best', framealpha=0.9)
+                ax.grid(True, alpha=0.3)
+                plt.tight_layout()
+                out_path = os.path.join(output_dir, f'{fname_base}.{FIGURE_FORMAT}')
+                plt.savefig(out_path, dpi=FIGURE_DPI, bbox_inches='tight')
+                print(f"  ✓ {fname_base}.{FIGURE_FORMAT} ({plotted} curves)")
+            plt.close(fig)
 
 
 # ---------------------------------------------------------------------------
