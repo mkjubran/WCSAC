@@ -46,63 +46,64 @@ _PROFILE_NAMES = {
 
 def fig5_dynamic_scenarios(exps_by_cat, output_dir):
     """
-    Generate all dynamic scenario figures (5a–5f3).
+    Generate all dynamic scenario figures (5a–5f3), one set per reward
+    formulation present in the data.
 
-    Only experiments with reward_formulation == 'global' are used, so that
-    figure 5 shows the baseline (global β) training behaviour.  Ablation
-    comparisons are handled separately by fig_dynamic_ablation_*.
-
-    When there is more than one qualifying experiment a short suffix derived
-    from run_name is appended to filenames so outputs don't overwrite each other.
+    Files are named e.g.:
+      fig5a_dynamic_beta_global.png
+      fig5a_dynamic_beta_weighted.png
+    When only one formulation exists the suffix is still appended for consistency.
+    When there are multiple experiments per formulation a run_name suffix is also
+    added so files don't overwrite each other.
     """
     print("\n[Figure 5] Dynamic Scenarios...")
 
     all_dynamic = exps_by_cat['dynamic']
-    exps = [e for e in all_dynamic
-            if e.get('reward_formulation', 'global') == 'global']
-
-    if not exps:
-        print("  ⚠️  No dynamic experiments with reward_formulation='global'")
-        print(f"       All dynamic runs: "
-              f"{[(e['run_name'], e.get('reward_formulation')) for e in all_dynamic]}")
+    if not all_dynamic:
+        print("  ⚠️  No dynamic experiments")
         return
 
-    multi = len(exps) > 1
+    # Group by reward formulation
+    rf_groups = {}
+    for exp in all_dynamic:
+        rf = exp.get('reward_formulation', 'global')
+        rf_groups.setdefault(rf, []).append(exp)
 
-    for exp in exps:
-        suffix = f'__{exp["run_name"]}' if multi else ''
-        data   = exp['data']
-        pool   = exp.get('dynamic_profile_set', [])
-        period = exp.get('dynamic_change_period')
-        pool_str   = f"[{abbrev_profile(pool)}]" if pool else ''
-        period_str = f", T={period} DTIs" if period else ''
-        print(f"\n  Processing: {exp['run_name']} — {exp['scenario_str']}{pool_str}{period_str}")
+    for rf, exps in sorted(rf_groups.items()):
+        sfx  = _rf_suffix(rf)
+        multi = len(exps) > 1
 
-        # 5a: Beta time series
-        _fig5a_beta_timeseries(data, output_dir, suffix)
+        for exp in exps:
+            run_sfx = f'__{exp["run_name"]}' if multi else ''
+            full_sfx = f'{sfx}{run_sfx}'
+            data    = exp['data']
+            pool    = exp.get('dynamic_profile_set', [])
+            period  = exp.get('dynamic_change_period')
+            pool_str   = f"[{abbrev_profile(pool)}]" if pool else ''
+            period_str = f", T={period} DTIs" if period else ''
+            print(f"\n  [{rf}] {exp['run_name']} — {exp['scenario_str']}"
+                  f"{pool_str}{period_str}")
 
-        # 5b: Allocation time series
-        _fig5b_allocation_timeseries(exp, output_dir, suffix)
+            _fig5a_beta_timeseries(data, output_dir, full_sfx)
+            _fig5b_allocation_timeseries(exp, output_dir, full_sfx)
 
-        # Episode 80
-        _fig5_episode_profiles(exp, data, output_dir, episode=80,
-                                label=f'fig5c{suffix}')
-        _fig5_allocation_periods(exp, output_dir, episode=80,
-                                 label_prefix=f'fig5d{suffix}')
-        _fig5_continuous_allocation(exp, output_dir, episode=80,
-                                    label=f'fig5d2{suffix}')
-        _fig5_continuous_beta(data, output_dir, episode=80,
-                              label=f'fig5d3{suffix}')
+            _fig5_episode_profiles(exp, data, output_dir, episode=80,
+                                    label=f'fig5c{full_sfx}')
+            _fig5_allocation_periods(exp, output_dir, episode=80,
+                                     label_prefix=f'fig5d{full_sfx}')
+            _fig5_continuous_allocation(exp, output_dir, episode=80,
+                                        label=f'fig5d2{full_sfx}')
+            _fig5_continuous_beta(data, output_dir, episode=80,
+                                  label=f'fig5d3{full_sfx}')
 
-        # Episode 160
-        _fig5_episode_profiles(exp, data, output_dir, episode=160,
-                                label=f'fig5e{suffix}')
-        _fig5_allocation_periods(exp, output_dir, episode=160,
-                                 label_prefix=f'fig5f{suffix}')
-        _fig5_continuous_allocation(exp, output_dir, episode=160,
-                                    label=f'fig5f2{suffix}')
-        _fig5_continuous_beta(data, output_dir, episode=160,
-                              label=f'fig5f3{suffix}')
+            _fig5_episode_profiles(exp, data, output_dir, episode=160,
+                                    label=f'fig5e{full_sfx}')
+            _fig5_allocation_periods(exp, output_dir, episode=160,
+                                     label_prefix=f'fig5f{full_sfx}')
+            _fig5_continuous_allocation(exp, output_dir, episode=160,
+                                        label=f'fig5f2{full_sfx}')
+            _fig5_continuous_beta(data, output_dir, episode=160,
+                                  label=f'fig5f3{full_sfx}')
 
 
 def _fig5a_beta_timeseries(data, output_dir, suffix=''):
@@ -393,151 +394,201 @@ def fig_actor_loss_comparison(experiments, output_dir):
 
 
 # ---------------------------------------------------------------------------
-# Per-Slice Beta Figures
+# Per-Slice Beta Figures  (one file per reward formulation)
 # ---------------------------------------------------------------------------
 
+def _dynamic_exps_with_slices(experiments, rf):
+    """Return all dynamic experiments for a given reward formulation that have per-slice data."""
+    return [
+        e for e in experiments
+        if e['category'] == 'dynamic'
+        and e.get('reward_formulation', 'global') == rf
+        and 'dti_beta_slice0' in e['data']
+        and 'dti_beta_slice1' in e['data']
+    ]
+
+
 def fig_per_slice_beta_training(experiments, output_dir):
-    """Per-slice β vs global β over full training (dynamic experiment)."""
+    """Per-slice β vs global β over full training — one file per reward formulation."""
     print("\n[Figure] Per-Slice Beta Training...")
 
-    exp = _find_dynamic_with_slices(experiments)
-    if not exp:
-        return
+    rf_list = sorted({e.get('reward_formulation', 'global')
+                      for e in experiments if e['category'] == 'dynamic'})
 
-    data   = exp['data']
-    labels = exp.get('slice_labels', [])
+    for rf in rf_list:
+        sfx  = _rf_suffix(rf)
+        exps = _dynamic_exps_with_slices(experiments, rf)
+        if not exps:
+            print(f"  ⚠️  [{rf}] No dynamic experiment with per-slice beta data")
+            continue
 
-    fig, ax = plt.subplots(figsize=(12, 6))
-    global_steps = np.array(data['dti_beta']['steps'])
-    ax.plot(global_steps, np.array(data['dti_beta']['values']),
-            label='Global β', color='black', linewidth=2.0, alpha=0.8)
-    for k, color in enumerate(['steelblue', 'coral']):
-        key = f'dti_beta_slice{k}'
-        if key in data:
-            slice_name = labels[k] if k < len(labels) else f'Slice {k}'
-            slice_steps = np.array(data[key]['steps'])
-            ax.plot(slice_steps, np.array(data[key]['values']),
-                    label=f'{slice_name} β', color=color,
-                    linewidth=1.5, alpha=0.7, linestyle='--')
-    ax.set_xlabel(LABEL_DTI, fontsize=12)
-    ax.set_ylabel(LABEL_BETA, fontsize=12)
-    ax.set_title('Per-Slice vs Global QoS Violations', fontsize=14, fontweight='bold')
-    ax.legend(loc='best', framealpha=0.9)
-    ax.grid(True, alpha=0.3)
-    ax.set_ylim([0, 1.05])
-    _save(fig, output_dir, 'fig_per_slice_beta_training')
+        exp    = exps[0]
+        data   = exp['data']
+        labels = exp.get('slice_labels', [])
+        print(f"  [{rf}] Using: {exp['run_name']}")
+
+        fig, ax = plt.subplots(figsize=(12, 6))
+        global_steps = np.array(data['dti_beta']['steps'])
+        ax.plot(global_steps, np.array(data['dti_beta']['values']),
+                label='Global β', color='black', linewidth=2.0, alpha=0.8)
+        for k, color in enumerate(['steelblue', 'coral']):
+            key = f'dti_beta_slice{k}'
+            if key in data:
+                slice_name = labels[k] if k < len(labels) else f'Slice {k}'
+                ax.plot(np.array(data[key]['steps']),
+                        np.array(data[key]['values']),
+                        label=f'{slice_name} β', color=color,
+                        linewidth=1.5, alpha=0.7, linestyle='--')
+        ax.set_xlabel(LABEL_DTI, fontsize=12)
+        ax.set_ylabel(LABEL_BETA, fontsize=12)
+        ax.set_title(f'Per-Slice vs Global QoS Violations — {rf.capitalize()} Reward',
+                     fontsize=14, fontweight='bold')
+        ax.legend(loc='best', framealpha=0.9)
+        ax.grid(True, alpha=0.3)
+        ax.set_ylim([0, 1.05])
+        _save(fig, output_dir, f'fig_per_slice_beta_training{sfx}')
 
 
 def fig_fairness_evolution(experiments, output_dir):
-    """Fairness ratio (max β / min β) over training."""
+    """Fairness ratio (max β / min β) over training — one file per reward formulation."""
     print("\n[Figure] Fairness Evolution...")
 
-    exp = _find_dynamic_with_slices(experiments)
-    if not exp:
-        return
+    rf_list = sorted({e.get('reward_formulation', 'global')
+                      for e in experiments if e['category'] == 'dynamic'})
 
-    data = exp['data']
-    steps = np.array(data['dti_beta_slice0']['steps'])
-    beta0 = np.array(data['dti_beta_slice0']['values'])
-    beta1 = np.array(data['dti_beta_slice1']['values'])
-    fairness = np.clip(
-        np.maximum(beta0, beta1) / (np.minimum(beta0, beta1) + 1e-6),
-        1.0, 10.0
-    )
+    for rf in rf_list:
+        sfx  = _rf_suffix(rf)
+        exps = _dynamic_exps_with_slices(experiments, rf)
+        if not exps:
+            print(f"  ⚠️  [{rf}] No dynamic experiment with per-slice beta data")
+            continue
 
-    fig, ax = plt.subplots(figsize=(12, 6))
-    ax.plot(steps, fairness, color='green', linewidth=2.0, alpha=0.8,
-            label='Fairness Ratio')
-    ax.axhline(y=1.0, color='red', linestyle='--', linewidth=1.5, alpha=0.5,
-               label='Perfect Fairness')
-    ax.set_xlabel(LABEL_DTI, fontsize=12)
-    ax.set_ylabel('Fairness Ratio (max β / min β)', fontsize=12)
-    ax.set_title('Slice Fairness During Training', fontsize=14, fontweight='bold')
-    ax.legend(loc='best', framealpha=0.9)
-    ax.grid(True, alpha=0.3)
-    ax.set_ylim([0.5, 5.0])
-    _save(fig, output_dir, 'fig_fairness_evolution')
+        exp  = exps[0]
+        data = exp['data']
+        print(f"  [{rf}] Using: {exp['run_name']}")
+
+        steps = np.array(data['dti_beta_slice0']['steps'])
+        beta0 = np.array(data['dti_beta_slice0']['values'])
+        beta1 = np.array(data['dti_beta_slice1']['values'])
+        fairness = np.clip(
+            np.maximum(beta0, beta1) / (np.minimum(beta0, beta1) + 1e-6),
+            1.0, 10.0
+        )
+
+        fig, ax = plt.subplots(figsize=(12, 6))
+        ax.plot(steps, fairness, color='green', linewidth=2.0, alpha=0.8,
+                label='Fairness Ratio')
+        ax.axhline(y=1.0, color='red', linestyle='--', linewidth=1.5, alpha=0.5,
+                   label='Perfect Fairness')
+        ax.set_xlabel(LABEL_DTI, fontsize=12)
+        ax.set_ylabel('Fairness Ratio (max β / min β)', fontsize=12)
+        ax.set_title(f'Slice Fairness During Training — {rf.capitalize()} Reward',
+                     fontsize=14, fontweight='bold')
+        ax.legend(loc='best', framealpha=0.9)
+        ax.grid(True, alpha=0.3)
+        ax.set_ylim([0.5, 5.0])
+        _save(fig, output_dir, f'fig_fairness_evolution{sfx}')
 
 
 def fig_episode_per_slice_beta(experiments, output_dir, episode=80):
-    """Per-slice β within a single episode."""
+    """Per-slice β within a single episode — one file per reward formulation."""
     print(f"\n[Figure] Episode {episode} Per-Slice Beta...")
 
     ep_key = f'ep{episode}_beta'
     s0_key = f'ep{episode}_beta_slice0'
     s1_key = f'ep{episode}_beta_slice1'
 
-    exp = None
-    for e in experiments:
-        if e['category'] == 'dynamic':
-            if all(k in e['data'] for k in [ep_key, s0_key, s1_key]):
+    rf_list = sorted({e.get('reward_formulation', 'global')
+                      for e in experiments if e['category'] == 'dynamic'})
+
+    for rf in rf_list:
+        sfx = _rf_suffix(rf)
+        exp = None
+        for e in experiments:
+            if (e['category'] == 'dynamic'
+                    and e.get('reward_formulation', 'global') == rf
+                    and all(k in e['data'] for k in [ep_key, s0_key, s1_key])):
                 exp = e
                 break
 
-    if not exp:
-        print(f"  ⚠️  No dynamic experiment with episode {episode} per-slice beta data")
-        return
+        if not exp:
+            print(f"  ⚠️  [{rf}] No dynamic experiment with episode {episode} "
+                  f"per-slice beta data")
+            continue
 
-    data   = exp['data']
-    labels = exp.get('slice_labels', [])
-    s0_name = labels[0] if len(labels) > 0 else 'Slice 0'
-    s1_name = labels[1] if len(labels) > 1 else 'Slice 1'
-    steps = data[ep_key].get('steps', list(range(len(data[ep_key]['values']))))
-    global_beta = np.array(data[ep_key]['values'])
+        data    = exp['data']
+        labels  = exp.get('slice_labels', [])
+        s0_name = labels[0] if len(labels) > 0 else 'Slice 0'
+        s1_name = labels[1] if len(labels) > 1 else 'Slice 1'
+        steps   = data[ep_key].get('steps', list(range(len(data[ep_key]['values']))))
 
-    fig, ax = plt.subplots(figsize=(14, 6))
-    ax.plot(steps, global_beta, label='Global β', color='black', linewidth=2.0, alpha=0.8)
-    ax.plot(steps, np.array(data[s0_key]['values']),
-            label=f'{s0_name} β', color='steelblue', linewidth=1.5, alpha=0.7, linestyle='--')
-    ax.plot(steps, np.array(data[s1_key]['values']),
-            label=f'{s1_name} β', color='coral', linewidth=1.5, alpha=0.7, linestyle='--')
-    ax.set_xlabel(f'DTI (within Episode {episode})', fontsize=12)
-    ax.set_ylabel(LABEL_BETA, fontsize=12)
-    ax.set_title(f'Per-Slice QoS Violations (Episode {episode})',
-                 fontsize=14, fontweight='bold')
-    ax.legend(loc='best', framealpha=0.9)
-    ax.grid(True, alpha=0.3)
-    ax.set_ylim([0, 1.05])
-    _save(fig, output_dir, f'fig5_ep{episode}_per_slice_beta')
+        fig, ax = plt.subplots(figsize=(14, 6))
+        ax.plot(steps, np.array(data[ep_key]['values']),
+                label='Global β', color='black', linewidth=2.0, alpha=0.8)
+        ax.plot(steps, np.array(data[s0_key]['values']),
+                label=f'{s0_name} β', color='steelblue',
+                linewidth=1.5, alpha=0.7, linestyle='--')
+        ax.plot(steps, np.array(data[s1_key]['values']),
+                label=f'{s1_name} β', color='coral',
+                linewidth=1.5, alpha=0.7, linestyle='--')
+        ax.set_xlabel(f'DTI (within Episode {episode})', fontsize=12)
+        ax.set_ylabel(LABEL_BETA, fontsize=12)
+        ax.set_title(f'Per-Slice QoS Violations (Episode {episode})'
+                     f' — {rf.capitalize()} Reward',
+                     fontsize=14, fontweight='bold')
+        ax.legend(loc='best', framealpha=0.9)
+        ax.grid(True, alpha=0.3)
+        ax.set_ylim([0, 1.05])
+        _save(fig, output_dir, f'fig5_ep{episode}_per_slice_beta{sfx}')
 
 
 def fig_slice_beta_boxplot(experiments, output_dir):
-    """Final-training distribution of per-slice β (box plot)."""
+    """Final-training per-slice β distribution — one file per reward formulation."""
     print("\n[Figure] Slice Beta Box Plot...")
 
-    exp = _find_dynamic_with_slices(experiments)
-    if not exp:
-        return
+    rf_list = sorted({e.get('reward_formulation', 'global')
+                      for e in experiments if e['category'] == 'dynamic'})
 
-    data   = exp['data']
-    labels = exp.get('slice_labels', [])
-    s0_name = labels[0] if len(labels) > 0 else 'Slice 0'
-    s1_name = labels[1] if len(labels) > 1 else 'Slice 1'
-    beta0 = np.array(data['dti_beta_slice0']['values'])
-    beta1 = np.array(data['dti_beta_slice1']['values'])
-    cutoff = int(len(beta0) * 0.8)
-    fb0, fb1 = beta0[cutoff:], beta1[cutoff:]
+    for rf in rf_list:
+        sfx  = _rf_suffix(rf)
+        exps = _dynamic_exps_with_slices(experiments, rf)
+        if not exps:
+            print(f"  ⚠️  [{rf}] No dynamic experiment with per-slice beta data")
+            continue
 
-    fig, ax = plt.subplots(figsize=(10, 6))
-    bp = ax.boxplot([fb0, fb1], labels=[s0_name, s1_name],
-                    patch_artist=True, widths=0.6)
-    for patch, color in zip(bp['boxes'], ['lightblue', 'lightcoral']):
-        patch.set_facecolor(color)
-        patch.set_alpha(0.7)
-    for med in bp['medians']:
-        med.set_color('red')
-        med.set_linewidth(2)
-    ax.set_ylabel(LABEL_BETA, fontsize=12)
-    ax.set_title('Final Performance: Per-Slice QoS Distribution',
-                 fontsize=14, fontweight='bold')
-    ax.grid(True, alpha=0.3, axis='y')
-    ax.set_ylim([0, 1.0])
-    ax.text(0.02, 0.98,
-            f"{s0_name}: μ={fb0.mean():.3f}, σ={fb0.std():.3f}\n"
-            f"{s1_name}: μ={fb1.mean():.3f}, σ={fb1.std():.3f}",
-            transform=ax.transAxes, verticalalignment='top',
-            bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5), fontsize=10)
-    _save(fig, output_dir, 'fig_slice_beta_boxplot')
+        exp    = exps[0]
+        data   = exp['data']
+        labels = exp.get('slice_labels', [])
+        s0_name = labels[0] if len(labels) > 0 else 'Slice 0'
+        s1_name = labels[1] if len(labels) > 1 else 'Slice 1'
+        print(f"  [{rf}] Using: {exp['run_name']}")
+
+        beta0 = np.array(data['dti_beta_slice0']['values'])
+        beta1 = np.array(data['dti_beta_slice1']['values'])
+        cutoff = int(len(beta0) * 0.8)
+        fb0, fb1 = beta0[cutoff:], beta1[cutoff:]
+
+        fig, ax = plt.subplots(figsize=(10, 6))
+        bp = ax.boxplot([fb0, fb1], labels=[s0_name, s1_name],
+                        patch_artist=True, widths=0.6)
+        for patch, color in zip(bp['boxes'], ['lightblue', 'lightcoral']):
+            patch.set_facecolor(color)
+            patch.set_alpha(0.7)
+        for med in bp['medians']:
+            med.set_color('red')
+            med.set_linewidth(2)
+        ax.set_ylabel(LABEL_BETA, fontsize=12)
+        ax.set_title(f'Final Performance: Per-Slice QoS Distribution'
+                     f' — {rf.capitalize()} Reward',
+                     fontsize=14, fontweight='bold')
+        ax.grid(True, alpha=0.3, axis='y')
+        ax.set_ylim([0, 1.0])
+        ax.text(0.02, 0.98,
+                f"{s0_name}: μ={fb0.mean():.3f}, σ={fb0.std():.3f}\n"
+                f"{s1_name}: μ={fb1.mean():.3f}, σ={fb1.std():.3f}",
+                transform=ax.transAxes, verticalalignment='top',
+                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5), fontsize=10)
+        _save(fig, output_dir, f'fig_slice_beta_boxplot{sfx}')
 
 
 # ---------------------------------------------------------------------------
@@ -809,6 +860,11 @@ def _save(fig, output_dir, stem, note=None):
     if note:
         msg += f" ({note})"
     print(msg)
+
+
+def _rf_suffix(rf):
+    """File-name suffix for a reward formulation, e.g. '_global'."""
+    return f'_{rf}'
 
 
 def _find_dynamic_with_slices(experiments):
