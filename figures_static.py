@@ -271,15 +271,15 @@ def fig1_training_convergence(experiments, output_dir):
         )
 
     # ── Combined figures: 4 curves each (all pools × all reward formulations) ──
-    # Collect one experiment per (pool_size, reward_formulation) combination.
-    # Color encodes reward formulation; line style encodes pool.
-    # Blues  (#377eb8 solid, #377eb8 dashed)  → global
-    # Oranges (#d95f02 solid, #d95f02 dashed) → weighted
-    # Solid  → smaller pool  (e.g. [L,M,H])
-    # Dashed → larger pool   (e.g. [EL,L,M,H,EH])
-
-    rf_color = {'global': '#377eb8', 'weighted': '#d95f02'}
-    pool_style = {}   # pool_size → linestyle, filled in below
+    # Each (pool, reward_formulation) combination gets a fully distinct color
+    # so all 4 curves are unambiguous.
+    # Line style is a secondary cue: solid = smaller pool, dashed = larger pool.
+    #
+    # Color assignment (sorted by pool_size asc, then rf asc):
+    #   [L,M,H]         global   → blue   #377eb8  solid
+    #   [L,M,H]         weighted → orange #d95f02  solid
+    #   [EL,L,M,H,EH]   global   → green  #4daf4a  dashed
+    #   [EL,L,M,H,EH]   weighted → purple #984ea3  dashed
 
     # Gather all unique (pool_size, rf) combos from dynamic experiments
     combos = {}   # (pool_size, rf) → exp
@@ -293,9 +293,15 @@ def fig1_training_convergence(experiments, output_dir):
             combos[key] = exp
 
     if combos:
-        # Assign line styles to pool sizes: smallest pool → solid, rest → dashed styles
-        for i, ps in enumerate(sorted({k[0] for k in combos})):
-            pool_style[ps] = ['-', '--', ':', '-.'][i % 4]
+        # Sort combos: pool_size asc, then rf asc → deterministic order
+        sorted_combos = sorted(combos.items())   # list of ((pool_size, rf), exp)
+
+        # Distinct colors for up to 4 combos
+        color_palette = ['#377eb8', '#d95f02', '#4daf4a', '#984ea3']
+
+        # Line style: solid for smallest pool, dashed for larger pools
+        pool_sizes_sorted = sorted({k[0] for k in combos})
+        pool_ls = {ps: ['-', '--', ':', '-.'][i] for i, ps in enumerate(pool_sizes_sorted)}
 
         for metric_key, ylabel, fname_base, title_base in [
             ('episode_reward', LABEL_REWARD,
@@ -308,19 +314,23 @@ def fig1_training_convergence(experiments, output_dir):
             fig, ax = plt.subplots(figsize=(10, 6))
             plotted = 0
 
-            for (pool_size, rf), exp in sorted(combos.items()):
+            for idx, ((pool_size, rf), exp) in enumerate(sorted_combos):
                 if metric_key not in exp['data']:
                     continue
-                pool  = exp.get('dynamic_profile_set', [])
-                color = rf_color.get(rf, 'gray')
-                ls    = pool_style.get(pool_size, '-')
+
+                pool        = exp.get('dynamic_profile_set', [])
+                color       = color_palette[idx % len(color_palette)]
+                ls          = pool_ls.get(pool_size, '-')
                 pool_abbrev = abbrev_profile(pool) if pool else exp['scenario_str']
-                label = f"[{pool_abbrev}] {rf.capitalize()}"
+                label       = f"[{pool_abbrev}] {rf.capitalize()}"
 
                 steps  = np.array(exp['data'][metric_key]['steps'])
                 values = np.array(exp['data'][metric_key]['values'])
-                ax.plot(steps, values, alpha=0.2, color=color, linewidth=0.8,
-                        linestyle=ls)
+
+                # Faint raw trace
+                ax.plot(steps, values, alpha=0.15, color=color,
+                        linewidth=0.8, linestyle=ls)
+                # Moving-average trend line (labelled)
                 if len(values) >= 20:
                     window = min(20, len(values) // 5)
                     ma = np.convolve(values, np.ones(window) / window, mode='valid')
