@@ -200,11 +200,12 @@ def _fig5_allocation_periods(exp, output_dir, episode, label_prefix):
     """
     Box plots per period within an episode.
 
-    Period boundaries are derived from the steps array logged by step1.
+    Period size is taken from exp['dynamic_change_period'] (the profile-switch
+    interval stored by step1 from DYNAMIC_PROFILE_CONFIG['change_period']).
+    If absent, the episode is divided into 10 equal groups.
     """
     data   = exp['data']
     labels = exp.get('slice_labels', [])
-    K      = exp.get('K', 2)
 
     s0_key = f'ep{episode}_action_slice0'
     s1_key = f'ep{episode}_action_slice1'
@@ -213,18 +214,16 @@ def _fig5_allocation_periods(exp, output_dir, episode, label_prefix):
 
     slice0 = data[s0_key]['values']
     slice1 = data[s1_key]['values']
-    steps  = data[s0_key].get('steps', list(range(len(slice0))))
 
-    # Infer period size from step gaps
-    if len(steps) > 1:
-        gaps = [steps[i+1] - steps[i] for i in range(len(steps) - 1)]
-        period_size = max(set(gaps), key=gaps.count)
-        period_size = max(period_size, 1)
-    else:
-        period_size = 1
+    # Use the profile-switch period as the box-plot grouping interval.
+    # This is the natural period: each box covers one traffic-profile interval.
+    period_size = exp.get('dynamic_change_period')
+    if not period_size or period_size <= 0:
+        # Fallback: divide episode into 10 equal groups
+        period_size = max(len(slice0) // 10, 1)
 
-    n_points   = len(slice0)
-    num_periods = n_points // period_size if period_size > 0 else 1
+    n_points    = len(slice0)
+    num_periods = n_points // period_size
 
     s0_name = labels[0] if len(labels) > 0 else 'Slice 0'
     s1_name = labels[1] if len(labels) > 1 else 'Slice 1'
@@ -239,24 +238,28 @@ def _fig5_allocation_periods(exp, output_dir, episode, label_prefix):
         s1p = slice1[start_idx:end_idx]
         if not s0p or not s1p:
             continue
-        step_start = steps[start_idx]
-        step_end   = steps[min(end_idx - 1, len(steps) - 1)]
+        # Label each box with its DTI range within the episode
+        dti_start = start_idx
+        dti_end   = end_idx - 1
         base = p * 2.5
         box_data   += [s0p, s1p]
-        box_labels += [f'{step_start}-{step_end}\n{s0_name}',
-                       f'{step_start}-{step_end}\n{s1_name}']
+        box_labels += [f'{dti_start}–{dti_end}\n{s0_name}',
+                       f'{dti_start}–{dti_end}\n{s1_name}']
         positions  += [base, base + 1]
         colors     += ['lightblue', 'lightcoral']
 
-    if box_data:
-        bp = ax.boxplot(box_data, positions=positions, labels=box_labels,
-                        patch_artist=True, widths=0.8)
-        for patch, color in zip(bp['boxes'], colors):
-            patch.set_facecolor(color)
-            patch.set_alpha(0.7)
-        for med in bp['medians']:
-            med.set_color('red')
-            med.set_linewidth(2)
+    if not box_data:
+        plt.close(fig)
+        return
+
+    bp = ax.boxplot(box_data, positions=positions, labels=box_labels,
+                    patch_artist=True, widths=0.8)
+    for patch, color in zip(bp['boxes'], colors):
+        patch.set_facecolor(color)
+        patch.set_alpha(0.7)
+    for med in bp['medians']:
+        med.set_color('red')
+        med.set_linewidth(2)
 
     ax.set_xlabel(f'DTI Range within Episode {episode}')
     ax.set_ylabel(LABEL_RBS)
@@ -268,7 +271,7 @@ def _fig5_allocation_periods(exp, output_dir, episode, label_prefix):
         Patch(facecolor='lightcoral', alpha=0.7, label=s1_name),
     ], loc='upper right')
     _save(fig, output_dir, f'{label_prefix}_dynamic_allocation_periods_ep{episode}',
-          note=f'{num_periods} periods')
+          note=f'{num_periods} periods × {period_size} DTIs')
 
 
 def _fig5_continuous_allocation(exp, output_dir, episode, label):
